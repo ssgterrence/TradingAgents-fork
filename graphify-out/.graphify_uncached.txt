@@ -1,0 +1,16 @@
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/AGENTS.md
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/CHANGELOG.md
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/README.md
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/cli/static/welcome.txt
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/requirements.txt
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/TauricResearch.png
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/analyst.png
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/cli/cli_init.png
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/cli/cli_news.png
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/cli/cli_technical.png
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/cli/cli_transaction.png
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/researcher.png
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/risk.png
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/schema.png
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/trader.png
+/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/tradingagents/assets/tauric-logo.svg

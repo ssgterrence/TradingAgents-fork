@@ -1,0 +1,44 @@
+{
+  "nodes": [
+    {
+      "id": "assets_tauricresearch_tauric_research_logo",
+      "label": "Tauric Research Logo",
+      "file_type": "image",
+      "source_file": "/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/TauricResearch.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_tauricresearch_tauric_research",
+      "label": "Tauric Research",
+      "file_type": "concept",
+      "source_file": "/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/TauricResearch.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "assets_tauricresearch_tauric_research_logo",
+      "target": "assets_tauricresearch_tauric_research",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/TauricResearch.png",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "coverage": {
+    "/Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork/assets/TauricResearch.png": 1
+  }
+}
