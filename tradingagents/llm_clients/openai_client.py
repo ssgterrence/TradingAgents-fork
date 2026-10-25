@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI
 from .api_key_env import get_api_key_env
 from .base_client import BaseLLMClient, normalize_content
 from .capabilities import get_capabilities
+from .opencode_session import request_headers
 from .validators import validate_model
 
 logger = logging.getLogger(__name__)
@@ -402,6 +403,14 @@ class OpenAIClient(BaseLLMClient):
             if key == "reasoning_effort" and not _supports_reasoning_effort(self.model):
                 continue
             llm_kwargs[key] = self.kwargs[key]
+
+        # The OpenCode Go router 400s with MissingSessionID unless each
+        # conversation sends a stable session ID, and asks clients to identify
+        # themselves with their own user agent (#opencode-go). Both are
+        # forwarded as default headers; other endpoints see none.
+        headers = request_headers(llm_kwargs.get("base_url"))
+        if headers:
+            llm_kwargs["default_headers"] = headers
 
         # The subclass (provider quirks) comes from the registry spec.
         return chat_cls(**llm_kwargs)
