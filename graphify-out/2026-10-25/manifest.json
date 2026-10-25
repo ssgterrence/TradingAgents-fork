@@ -1092,10 +1092,10 @@
     "semantic_hash": "e2986a853e104e12e426be3f885ec707"
   },
   "tradingagents/llm_clients/openai_client.py": {
-    "mtime": 1792901242.8452673,
-    "seen": 1792902991.54621,
-    "ast_hash": "d110ba343161bd74d473b8c8b9df91af",
-    "semantic_hash": "d110ba343161bd74d473b8c8b9df91af"
+    "mtime": 1792908881.076953,
+    "seen": 1792909060.9260318,
+    "ast_hash": "4f0df4dae3deb168ed9ba7bdcbf208d5",
+    "semantic_hash": ""
   },
   "tradingagents/llm_clients/validators.py": {
     "mtime": 1792898742.1995862,
@@ -1144,5 +1144,113 @@
     "seen": 1792902991.5462232,
     "ast_hash": "951bb12dd0dd20036bd6c79343cb49d7",
     "semantic_hash": "951bb12dd0dd20036bd6c79343cb49d7"
+  },
+  "tests/test_opencode_session.py": {
+    "mtime": 1792908905.9158852,
+    "seen": 1792909060.9258916,
+    "ast_hash": "b0f92263c67c8f7c4e30582036ecbd99",
+    "semantic_hash": ""
+  },
+  "tradingagents/llm_clients/opencode_session.py": {
+    "mtime": 1792908872.2879312,
+    "seen": 1792909060.9260333,
+    "ast_hash": "de9e89d7f6ecd476e016c8a0eeb69ca9",
+    "semantic_hash": ""
+  },
+  "AGENTS.md": {
+    "mtime": 1792902566.695185,
+    "seen": 1792909060.926045,
+    "ast_hash": "f36539ecc9af68f33ebd72770ce4a19e",
+    "semantic_hash": ""
+  },
+  "CHANGELOG.md": {
+    "mtime": 1792898742.1504366,
+    "seen": 1792909060.9260461,
+    "ast_hash": "950f01ec0adbde45b47f36ee516b23de",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1792909048.9917173,
+    "seen": 1792909060.9260473,
+    "ast_hash": "b084a06c86d7c3a931a79543121b891d",
+    "semantic_hash": ""
+  },
+  "cli/static/welcome.txt": {
+    "mtime": 1792898742.1690571,
+    "seen": 1792909060.9260485,
+    "ast_hash": "eece957f7b9d61b1d3e0ffaa13c9ee74",
+    "semantic_hash": ""
+  },
+  "requirements.txt": {
+    "mtime": 1792898742.1697984,
+    "seen": 1792909060.9260497,
+    "ast_hash": "ce2d26e30ff5b8c183adc410af69e273",
+    "semantic_hash": ""
+  },
+  "assets/TauricResearch.png": {
+    "mtime": 1792898742.1515126,
+    "seen": 1792909060.926051,
+    "ast_hash": "fc1788d11571f9cf491388742860f019",
+    "semantic_hash": ""
+  },
+  "assets/analyst.png": {
+    "mtime": 1792898742.1525967,
+    "seen": 1792909060.9260519,
+    "ast_hash": "93096fff6ed78bfb3aeeacadf7169546",
+    "semantic_hash": ""
+  },
+  "assets/cli/cli_init.png": {
+    "mtime": 1792898742.1533933,
+    "seen": 1792909060.9260528,
+    "ast_hash": "28b84708d06f7d4328b0d15219df731c",
+    "semantic_hash": ""
+  },
+  "assets/cli/cli_news.png": {
+    "mtime": 1792898742.1567743,
+    "seen": 1792909060.926054,
+    "ast_hash": "396432d87fe7e404843c56a1b93fddf9",
+    "semantic_hash": ""
+  },
+  "assets/cli/cli_technical.png": {
+    "mtime": 1792898742.1599307,
+    "seen": 1792909060.926055,
+    "ast_hash": "439f6740a4b455bf4d05756f9eb537be",
+    "semantic_hash": ""
+  },
+  "assets/cli/cli_transaction.png": {
+    "mtime": 1792898742.1635547,
+    "seen": 1792909060.926056,
+    "ast_hash": "4ab6758ca0d5201f881fb010c063238f",
+    "semantic_hash": ""
+  },
+  "assets/researcher.png": {
+    "mtime": 1792898742.1643083,
+    "seen": 1792909060.926057,
+    "ast_hash": "40cf4d70ed8f8c828a5a54469d7f03ad",
+    "semantic_hash": ""
+  },
+  "assets/risk.png": {
+    "mtime": 1792898742.1651514,
+    "seen": 1792909060.9260583,
+    "ast_hash": "749e3f0a9c0f9928e93786e860592594",
+    "semantic_hash": ""
+  },
+  "assets/schema.png": {
+    "mtime": 1792898742.1663978,
+    "seen": 1792909060.9260595,
+    "ast_hash": "b1d6a9e2d0d3987ba2cc4b9e859afc30",
+    "semantic_hash": ""
+  },
+  "assets/trader.png": {
+    "mtime": 1792898742.1671972,
+    "seen": 1792909060.9260604,
+    "ast_hash": "f07a05b4be1cbdad01a24caf37e030b1",
+    "semantic_hash": ""
+  },
+  "tradingagents/assets/tauric-logo.svg": {
+    "mtime": 1792898742.1907887,
+    "seen": 1792909060.9260616,
+    "ast_hash": "0f1e17d1228d150466d379e09684c01d",
+    "semantic_hash": ""
   }
 }

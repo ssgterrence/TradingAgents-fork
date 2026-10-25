@@ -4007,8 +4007,41 @@
       "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
     }
   ],
-  "tokens": {
-    "input": 0,
-    "output": 0
-  }
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `TradingAgentsGraph` connect `TradingAgentsGraph` to `.save_reports`, `test_backtest.py`, `TestDeferredReflection`, `test_cli_headless.py`, `._memory_step`, `fetch_returns`, `test_portfolio_context.py`, `test_cli_memory_log.py`, `BaseLLMClient`, `Propagator`, `trading_graph.py`, `ConditionalLogic`, `test_dataflows_config.py`, `test_tool_date_enforcement.py`, `checkpointer.py`, `settle_all_pending`, `test_cli_display.py`, `run.py`, `_graph`, `write_report_tree`, `test_checkpoint_resume.py`, `test_checkpoint_lifecycle.py`, `thread_id`, `TestLegacyRemoval`, `test_memory_pointintime.py`, `backtest.py`?",
+      "why": "High betweenness centrality (0.044) - this node is a cross-community bridge."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 25 inferred relationships involving `TradingAgentsGraph` (e.g. with `_bare_graph()` and `TestCheckpointSignature`) actually correct?",
+      "why": "`TradingAgentsGraph` has 25 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `tradingagents` to the rest of the system?",
+      "why": "1 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `date_window.py` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.052947052947052944 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `TradingMemoryLog` connect `TradingMemoryLog` to `test_rating_integrity.py`, `_FakeGraph`, `test_backtest.py`, `TestLegacyRemoval`, `test_memory_pointintime.py`, `make_log`, `trading_graph.py`, `fetch_returns`, `backtest.py`, `test_portfolio_context.py`, `test_cli_memory_log.py`?",
+      "why": "High betweenness centrality (0.032) - this node is a cross-community bridge."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 22 inferred relationships involving `NoMarketDataError` (e.g. with `TestNoUsableFieldsStillRaises` and `TestLoadOhlcvNoPoison`) actually correct?",
+      "why": "`NoMarketDataError` has 22 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `test_ohlcv_latest_bar.py` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.0525879917184265 - nodes in this community are weakly interconnected."
+    }
+  ]
 }
