@@ -87,6 +87,19 @@ def _coerce_max_tokens(value):
     return n
 
 
+def _coerce_timeout(value):
+    """Validate an ``llm_timeout`` value to a positive float (env vars are strings)."""
+    if isinstance(value, bool):
+        raise ValueError(f"llm_timeout must be a number, not a boolean: {value!r}")
+    try:
+        t = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"llm_timeout must be a number, got {value!r}") from exc
+    if t <= 0:
+        raise ValueError(f"llm_timeout must be > 0, got {t}")
+    return t
+
+
 # Providers that take OpenAI's ``openai_reasoning_effort``.
 REASONING_EFFORT_PROVIDERS = ("openai", "chatgpt")
 
@@ -123,6 +136,12 @@ def build_llm_kwargs(config: dict) -> dict[str, Any]:
     max_retries = config.get("llm_max_retries")
     if max_retries is not None and max_retries != "":
         kwargs["max_retries"] = _coerce_max_retries(max_retries)
+
+    # Per-request timeout is cross-provider. Forward it only when explicitly set
+    # so each provider keeps its own default otherwise.
+    timeout = config.get("llm_timeout")
+    if timeout is not None and timeout != "":
+        kwargs["timeout"] = _coerce_timeout(timeout)
 
     # Output-token cap is cross-provider, but Gemini names it
     # ``max_output_tokens``; forward under the right key when set (#1204).
