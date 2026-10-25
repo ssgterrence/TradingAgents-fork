@@ -6,9 +6,15 @@ from tradingagents.agents.state import InvestDebateState, RiskDebateState
 class Propagator:
     """Handles state initialization and propagation through the graph."""
 
-    def __init__(self, max_recur_limit=100):
-        """Initialize with configuration parameters."""
+    def __init__(self, max_recur_limit=100, max_concurrency=None):
+        """Initialize with configuration parameters.
+
+        ``max_concurrency`` caps how many graph nodes (analysts, debaters, ...)
+        run concurrently per superstep; None relies on langgraph's default.
+        The env overlay delivers strings, so it is coerced here.
+        """
         self.max_recur_limit = max_recur_limit
+        self.max_concurrency = int(max_concurrency) if max_concurrency else None
 
     def create_initial_state(
         self,
@@ -72,6 +78,8 @@ class Propagator:
                        Note: LLM callbacks are handled separately via LLM constructor.
         """
         config = {"recursion_limit": self.max_recur_limit}
+        if self.max_concurrency:
+            config["max_concurrency"] = self.max_concurrency
         if callbacks:
             config["callbacks"] = callbacks
         return {

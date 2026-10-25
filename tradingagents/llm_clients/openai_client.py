@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+import openai
 from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 
@@ -16,6 +17,29 @@ from .opencode_session import request_headers
 from .validators import validate_model
 
 logger = logging.getLogger(__name__)
+
+
+class LLMCapacityError(RuntimeError):
+    """Rate-limit retries were exhausted: the upstream endpoint stayed at capacity.
+
+    Raised after the provider SDK has spent its full retry budget on 429s
+    (retries that honored Retry-After and backed off exponentially). The
+    client-side work is done — waiting longer only helps if the run is
+    restarted later.
+    """
+
+
+# Explain an exhausted retry budget in run terms: the SDK already honored
+# Retry-After per attempt, so the miss is transient upstream capacity, not a
+# misconfigured quota — the actionable move is a later rerun or a lighter model.
+_CAPACITY_HINT = (
+    "upstream LLM endpoint stayed at capacity (HTTP 429, server told clients "
+    "to retry shortly) after exhausting the retry budget "
+    "(llm_max_retries / TRADINGAGENTS_LLM_MAX_RETRIES). This is transient "
+    "upstream capacity, not a quota rejection. Rerun later, lower "
+    "TRADINGAGENTS_MAX_CONCURRENCY, or point the run's model/provider "
+    "somewhere with spare capacity."
+)
 
 
 class NormalizedChatOpenAI(ChatOpenAI):
@@ -37,8 +61,17 @@ class NormalizedChatOpenAI(ChatOpenAI):
     stays small.
     """
 
+    def _on_rate_limit_exhausted(self, exc: Exception) -> Exception:
+        raise LLMCapacityError(
+            f"A call to {self.model_name} failed after SDK retries because "
+            f"the upstream endpoint is at capacity: {_CAPACITY_HINT}"
+        ) from exc
+
     def invoke(self, input, config=None, **kwargs):
-        return normalize_content(super().invoke(input, config, **kwargs))
+        try:
+            return normalize_content(super().invoke(input, config, **kwargs))
+        except openai.RateLimitError as exc:
+            self._on_rate_limit_exhausted(exc)
 
     def with_structured_output(self, schema, *, method=None, **kwargs):
         caps = get_capabilities(self.model_name)

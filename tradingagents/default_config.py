@@ -24,7 +24,9 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
     "TRADINGAGENTS_TEMPERATURE":          "temperature",
     "TRADINGAGENTS_LLM_MAX_RETRIES":      "llm_max_retries",
+    "TRADINGAGENTS_LLM_TIMEOUT":          "llm_timeout",
     "TRADINGAGENTS_MAX_TOKENS":           "max_tokens",
+    "TRADINGAGENTS_MAX_CONCURRENCY":      "max_concurrency",
     # Provider-specific reasoning/thinking knobs (None = each provider's own
     # default). Settable here for non-interactive runs; the CLI also offers an
     # interactive choice, which is skipped when the matching var is set.
@@ -118,6 +120,9 @@ def build_default_config() -> dict:
         # provider/SDK at its own default (usually 2). Raise it to ride out bursty
         # 429 throttling on rate-limited deployments instead of aborting a run (#1091).
         "llm_max_retries": None,
+        # Per-request timeout in seconds forwarded to every provider chat client.
+        # None leaves each provider/SDK at its own default (OpenAI SDK: 600 s).
+        "llm_timeout": None,
         # Cap on output tokens forwarded to every provider chat client. None leaves
         # each provider at its own default. Set it to bound a model that emits
         # unbounded reasoning/output and hangs or trips a gateway idle timeout
@@ -133,6 +138,10 @@ def build_default_config() -> dict:
         "max_debate_rounds": 1,
         "max_risk_discuss_rounds": 1,
         "max_recur_limit": 100,
+        # Max graph nodes (analysts, debaters, ...) run in parallel per superstep.
+        # None lets langgraph use its ThreadPoolExecutor default. Lower it (e.g. 2)
+        # when a rate-limited endpoint 429s under the parallel burst.
+        "max_concurrency": None,
         # Rounds of tool calls an analyst may make before it is asked for its report.
         "max_tool_rounds": 20,
         # News / data fetching parameters
