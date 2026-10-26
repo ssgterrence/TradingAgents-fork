@@ -224,3 +224,4 @@ reports/
 health-reports/
 
 .venv-*
+logs
