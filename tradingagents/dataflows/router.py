@@ -173,6 +173,22 @@ def get_vendor(category: str, method: str = None) -> str:
     return config.get("data_vendors", {}).get(category, "default")
 
 
+def _is_fallback_notice(value) -> bool:
+    """Whether a successful vendor returned a withholding/fallback notice, not data.
+
+    Used only to explain a failed primary: the note names the vendor and error
+    class, never the exception text (which can contain a URL with an API key).
+    """
+    if not isinstance(value, str):
+        return False
+    text = value.lstrip()
+    if text.startswith("<") and "unavailable" in text.lower():
+        return True
+    return "withheld" in text.lower() and (
+        text.startswith("#") or text.startswith("Prediction-market")
+    )
+
+
 def vendor_unavailable(method: str, error: Exception) -> str:
     """What a call returns when every vendor was throttled or unreachable."""
     return (
@@ -228,17 +244,19 @@ def route_to_vendor(method: str, *args, **kwargs):
     last_unavailable: VendorUnavailableError | None = None
     failed: Exception | None = None     # a vendor that raised something untyped
     first_error: Exception | None = None
+    unavailable: list[tuple[str, str]] = []   # (vendor, error class) for a later note
     for vendor in vendor_chain:
         vendor_impl = VENDOR_METHODS[method][vendor]
         impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
 
         try:
-            return impl_func(*args, **kwargs)
+            value = impl_func(*args, **kwargs)
         except VendorUnavailableError as e:
             logger.warning("Vendor %r unavailable for %s: %s; trying next vendor.", vendor, method, e)
             # Kept so an all-unavailable chain can say the vendor was the
             # problem, rather than reporting nothing about the symbol.
             last_unavailable = e
+            unavailable.append((vendor, type(e).__name__))
             continue
         except VendorNotConfiguredError as e:
             logger.warning("Vendor %r not configured for %s; trying next vendor.", vendor, method)
@@ -257,6 +275,14 @@ def route_to_vendor(method: str, *args, **kwargs):
                 first_error = e
             failed = e
             continue
+        else:
+            if unavailable and _is_fallback_notice(value):
+                failed_vendor, error_class = unavailable[0]
+                value = (
+                    f"{value.rstrip()}\n\nNote: {failed_vendor} was unavailable for "
+                    f"this call ({error_class}); the notice above is from {vendor}."
+                )
+            return value
 
     # A vendor that throttled or failed the request never said whether it has
     # the symbol, so no other vendor's "no data" can speak for the whole chain:

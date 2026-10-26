@@ -18,6 +18,7 @@ import pytest
 import tradingagents.agents.analysts.sentiment_analyst as sentiment
 from tradingagents.agents.managers.portfolio_manager import create_portfolio_manager
 from tradingagents.agents.managers.research_manager import create_research_manager
+from tradingagents.agents.prompt_rules import HEADLINE_NUMERIC_CLAIM_RULE
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS
 from tradingagents.agents.trader.trader import create_trader
 
@@ -104,6 +105,55 @@ def test_portfolio_manager_prompt_states_constraint():
         "trader_investment_plan": "trader plan",
     })
     assert NO_EXTERNAL_TOOLS in _prompt_text(captured["prompt"])
+
+
+@pytest.mark.unit
+def test_research_manager_prompt_labels_headline_only_numbers():
+    from tradingagents.agents.schemas import PortfolioRating, ResearchPlan
+
+    captured = {}
+    llm = _capturing_llm(
+        captured,
+        ResearchPlan(
+            recommendation=PortfolioRating.BUY, rationale="x", strategic_actions="y"
+        ),
+    )
+    create_research_manager(llm)({
+        "company_of_interest": "NVDA",
+        "investment_debate_state": {
+            "history": "h", "bull_history": "b", "bear_history": "r",
+            "current_response": "", "count": 1,
+        },
+    })
+    assert HEADLINE_NUMERIC_CLAIM_RULE in _prompt_text(captured["prompt"])
+
+
+@pytest.mark.unit
+def test_portfolio_manager_prompt_labels_headline_only_numbers():
+    from tradingagents.agents.schemas import PortfolioDecision, PortfolioRating
+
+    captured = {}
+    llm = _capturing_llm(
+        captured,
+        PortfolioDecision(
+            rating=PortfolioRating.HOLD,
+            executive_summary="x",
+            investment_thesis="y",
+        ),
+    )
+    risk = {
+        "history": "h", "aggressive_history": "a", "conservative_history": "c",
+        "neutral_history": "n", "current_aggressive_response": "",
+        "current_conservative_response": "", "current_neutral_response": "",
+        "latest_speaker": "Neutral", "count": 1,
+    }
+    create_portfolio_manager(llm)({
+        "company_of_interest": "NVDA",
+        "risk_debate_state": risk,
+        "investment_plan": "plan",
+        "trader_investment_plan": "trader plan",
+    })
+    assert HEADLINE_NUMERIC_CLAIM_RULE in _prompt_text(captured["prompt"])
 
 
 @pytest.mark.unit

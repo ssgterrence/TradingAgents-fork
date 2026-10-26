@@ -20,6 +20,32 @@ from tradingagents.dataflows.vendors.yahoo.common import (
 _MAIN_UNIT = {"GBp": "GBP", "GBX": "GBP", "ZAc": "ZAR", "ILA": "ILS"}
 
 
+def _top_holdings(canonical: str) -> str | None:
+    """The fund's top ten holdings with weights, or None when Yahoo has none.
+
+    This is fund data, not a company statement. A failure here must not sink the
+    profile fields that did load, so the caller gets None and omits the line.
+    """
+    try:
+        holdings = yf.Ticker(canonical).funds_data.top_holdings
+    except Exception:  # noqa: BLE001 — optional ETF enrichment
+        return None
+    if holdings is None or holdings.empty:
+        return None
+    parts = []
+    for symbol, row in holdings.head(10).iterrows():
+        name = str(row.get("Name") or "").strip()
+        label = f"{symbol} {name}".strip()
+        try:
+            pct = float(row.get("Holding Percent"))
+        except (TypeError, ValueError):
+            pct = None
+        if pct is not None:
+            label += f" {pct * 100:.1f}%"
+        parts.append(label)
+    return "; ".join(parts) if parts else None
+
+
 def get_fundamentals(
     ticker: Annotated[str, "ticker symbol of the company"],
     as_of_date: Annotated[str, "analysis date in YYYY-MM-DD format"] = None
@@ -92,7 +118,34 @@ def get_fundamentals(
         ("Free Cash Flow", money("freeCashflow", reported)),
     ]
 
+    # An ETF is a fund, not an operating company. Its P/E and P/B are
+    # aggregate figures for the holdings, not corporate valuation, so add the
+    # fund-level fields an ETF workflow actually uses (issue I-08).
+    is_etf = (info.get("quoteType") or "").upper() == "ETF"
+    if is_etf:
+        fund_yield = info.get("yield")
+        fields = [
+            ("Instrument Type", "ETF (fund, not an operating company)"),
+            ("Fund Family", info.get("fundFamily")),
+            ("Legal Type", info.get("legalType")),
+            ("Category", info.get("category")),
+            ("Total Assets", money("totalAssets", main)),
+            ("Net Expense Ratio", None if info.get("netExpenseRatio") is None
+             else f"{info.get('netExpenseRatio')}%"),
+            ("Distribution Yield (TTM)", None if fund_yield is None
+             else f"{fund_yield * 100:.2f}%"),
+            ("NAV Price", money("navPrice", quote)),
+            ("Beta (3Y)", info.get("beta3Year")),
+            *fields,
+            ("Top Holdings", _top_holdings(canonical)),
+        ]
+
     lines = [f"{label}: {v}" for label, v in fields if v is not None]
+    if is_etf:
+        lines.append(
+            "Valuation note: P/E and P/B above are fund aggregates, not "
+            "corporate valuation metrics."
+        )
 
     # yfinance returns a stub dict (e.g. {"trailingPegRatio": None}) for
     # unknown symbols, so `info` is truthy but every field is empty. Treat
