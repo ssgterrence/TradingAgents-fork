@@ -54,6 +54,15 @@ def _extract_article_data(article: dict) -> dict:
     }
 
 
+# Yahoo's search tags Alphabet articles with the other share class: a search
+# for GOOGL returns articles whose ``relatedTickers`` list GOOG. They are the
+# same company, so either class identifies news about it.
+_NEWS_SYMBOL_ALIASES = {
+    "GOOGL": ("GOOG",),
+    "GOOG": ("GOOGL",),
+}
+
+
 def _search_news(canonical: str, limit: int) -> tuple[list, bool]:
     """Yahoo search's articles tagged with ``canonical``, and whether it knows the symbol.
 
@@ -64,9 +73,10 @@ def _search_news(canonical: str, limit: int) -> tuple[list, bool]:
     search = yf_retry(lambda: yf.Search(canonical, news_count=limit))
     if search is None:  # Yahoo answered "not found": its search is down
         return [], False
+    wanted = {canonical, *_NEWS_SYMBOL_ALIASES.get(canonical, ())}
     tagged = [
         a for a in (search.news or [])
-        if canonical in (t.upper() for t in a.get("relatedTickers") or [])
+        if wanted.intersection(t.upper() for t in a.get("relatedTickers") or [])
     ]
     knows = any((q.get("symbol") or "").upper() == canonical for q in search.quotes or [])
     return tagged, knows or bool(search.news)

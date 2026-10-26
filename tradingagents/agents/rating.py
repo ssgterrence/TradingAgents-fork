@@ -52,6 +52,18 @@ _RATING_LINE_RE = re.compile(
 # A line presenting the scale rather than a decision ("Rating Scale: Buy, ...").
 _RATING_SCALE_RE = re.compile(r"rating\s*(scale|options|legend)", re.IGNORECASE)
 
+# A free-text fallback sometimes opens with just the rating ("**Hold**") even
+# though the prompt asks for "**Rating**: Hold". That line is still the
+# decision's own opening call; without this, every such run was recorded as
+# REVIEW despite a perfectly readable rating.
+_BARE_RATING_RE = re.compile(
+    r"^\s*[\s*_#>\-\u2022]*"
+    r"(?P<value>Buy|Overweight|Hold|Underweight|Sell)"
+    r"\s*[\s*_]*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+
 def extract_rating(text: str) -> str | None:
     """Extract a 5-tier rating from its label, or ``None`` if there is none.
 
@@ -74,6 +86,9 @@ def extract_rating(text: str) -> str | None:
     lines = [line for line in norm.splitlines() if line.strip() and not _RATING_SCALE_RE.search(line)]
     first = next((line for line in lines if not line.lstrip().startswith("#")
                   or _RATING_LINE_RE.match(line)), "")
+    bare = _BARE_RATING_RE.match(first)
+    if bare:
+        return bare.group("value").capitalize()
     m = _RATING_LINE_RE.match(first)
     opening = m if m and m.group("value").lower() in _RATING_SET else None
     if opening and not opening.group("item"):
