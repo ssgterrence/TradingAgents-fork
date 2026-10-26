@@ -28,6 +28,16 @@ def test_the_labelled_rating_wins_whatever_separates_it(separator):
 
 
 @pytest.mark.unit
+def test_a_bare_rating_opening_line_is_the_decision():
+    """The free-text fallback can answer "**Hold**" instead of "**Rating**: Hold".
+
+    The line is the decision's own opening call, so it must not become REVIEW.
+    """
+    text = "**Hold**\n\n**Executive Summary**\n\nMaintain the position."
+    assert extract_rating(text) == "Hold"
+
+
+@pytest.mark.unit
 def test_a_rating_argued_against_is_not_read_as_the_decision():
     assert extract_rating(INVERTED) == "Underweight"
 

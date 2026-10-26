@@ -96,6 +96,18 @@ def build_verified_market_snapshot(
         f"- Requested analysis date: {as_of_date}",
         f"- Latest trading row used: {latest_date}",
         "- Rows after the requested analysis date are excluded before verification.",
+    ]
+    # A requested date with no settled bar is not necessarily a market holiday:
+    # on a trading day before the close (or before the vendor publishes the
+    # bar), the latest row is the previous session. Say which case is unknown
+    # rather than leaving the model to call a normal session a non-trading day.
+    if pd.to_datetime(latest_date).date() != pd.to_datetime(as_of_date).date():
+        lines.append(
+            f"- Note: no settled bar is available for {as_of_date}; {latest_date} is "
+            "the latest completed session. That can mean the requested date is a "
+            "weekend or market holiday, or that its session has not closed yet."
+        )
+    lines += [
         "",
         "### Latest verified OHLCV row",
         "",

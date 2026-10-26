@@ -290,6 +290,15 @@ def test_search_tags_are_matched_whatever_their_case(monkeypatch):
 
 
 @pytest.mark.unit
+def test_alphabet_news_tagged_with_the_other_share_class_is_kept(monkeypatch):
+    # Yahoo tags Alphabet articles with GOOG, so a GOOGL search otherwise looks
+    # empty even though every result is about the same company.
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    _ticker_with([], monkeypatch, search_news=[_tagged("ABOUT ALPHABET", today, "GOOG")])
+    assert "ABOUT ALPHABET" in ynews.get_news_yfinance("GOOGL", today, today)
+
+
+@pytest.mark.unit
 def test_a_search_with_articles_has_answered_even_without_listing_the_symbol(monkeypatch):
     today = datetime.now(UTC).strftime("%Y-%m-%d")
     _ticker_with([], monkeypatch, search_quotes=(),

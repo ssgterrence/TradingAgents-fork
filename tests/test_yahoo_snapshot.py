@@ -44,7 +44,14 @@ class TestVerifiedSnapshot:
         # 2026-05-16 is a Saturday; latest row should be Fri 2026-05-15
         snap = validator.build_verified_market_snapshot("COF", "2026-05-16")
         assert "Latest trading row used: 2026-05-15" in snap
+        assert "no settled bar is available for 2026-05-16" in snap
+        assert "weekend or market holiday" in snap
         assert "Recent verified closes" in snap
+
+    def test_no_note_when_the_requested_date_has_a_bar(self, monkeypatch):
+        monkeypatch.setattr(validator, "load_ohlcv", lambda s, d, fill_gaps=True: _sample_ohlcv())
+        snap = validator.build_verified_market_snapshot("COF", "2026-05-13")
+        assert "no settled bar is available" not in snap
 
     def test_raises_when_no_rows_on_or_before_date(self, monkeypatch):
         monkeypatch.setattr(validator, "load_ohlcv", lambda s, d, fill_gaps=True: _sample_ohlcv())
