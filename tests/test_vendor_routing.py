@@ -15,7 +15,7 @@ import tradingagents.dataflows.config as config_module
 import tradingagents.default_config as default_config
 from tradingagents.dataflows import router
 from tradingagents.dataflows.config import set_config
-from tradingagents.dataflows.errors import NoMarketDataError
+from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
 
 
 def _reset_config():
@@ -118,6 +118,41 @@ class VendorRoutingTests(unittest.TestCase):
         with self._route({"yfinance": _raises(ValueError("boom"))}), \
                 self.assertRaises(ValueError):
             router.route_to_vendor("get_stock_data", "AAPL", "2026-01-01", "2026-01-10")
+
+    def test_a_withheld_fallback_names_the_failed_primary(self):
+        """I-15: the agent must be able to tell a blocked primary from a vendor
+        that deliberately withheld the data. The note names the vendor and error
+        class only; it must not copy the exception text, which can hold a keyed URL."""
+        set_config({"data_vendors": {"fundamental_data": "sec_edgar,yfinance"}})
+        failure = VendorUnavailableError(
+            "SEC EDGAR request failed (403) https://data.sec.gov?api_key=SECRET"
+        )
+        withheld = (
+            "# Income Statement for AAPL\n# Point-in-time as of: 2026-10-23\n\n"
+            "Income Statement data is withheld for this date."
+        )
+        with self._route_method(
+            "get_income_statement", {"sec_edgar": _raises(failure), "yfinance": _returns(withheld)}
+        ):
+            result = router.route_to_vendor(
+                "get_income_statement", "AAPL", "quarterly", "2026-10-23"
+            )
+        self.assertIn("Note: sec_edgar was unavailable", result)
+        self.assertIn("VendorUnavailableError", result)
+        self.assertIn("the notice above is from yfinance", result)
+        self.assertNotIn("SECRET", result)
+        self.assertNotIn("api_key", result)
+
+    def test_a_normal_fallback_does_not_get_a_note(self):
+        set_config({"data_vendors": {"fundamental_data": "sec_edgar,yfinance"}})
+        with self._route_method(
+            "get_income_statement",
+            {"sec_edgar": _raises(VendorUnavailableError("down")), "yfinance": _returns("REAL DATA")},
+        ):
+            result = router.route_to_vendor(
+                "get_income_statement", "AAPL", "quarterly", "2026-10-23"
+            )
+        self.assertEqual(result, "REAL DATA")
 
 
 if __name__ == "__main__":
