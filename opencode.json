@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "servers": {
+      "stocktwits": {
+        "type": "remote",
+        "url": "https://mcp.stocktwits.com/mcp"
+      }
+    }
+  }
+}
