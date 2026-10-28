@@ -76,6 +76,15 @@ def _apply_env_overrides(config: dict) -> dict:
     return config
 
 
+def _path_from_env(env_var: str, default: str) -> str:
+    """An env-configured path with ``~`` expanded, like a shell would.
+
+    Leaving ``~`` unexpanded made a run create a literal ``~/Documents/...``
+    directory under the working directory instead of the path the user meant.
+    """
+    return os.path.expanduser(os.getenv(env_var) or default)
+
+
 def build_default_config() -> dict:
     """The built-in defaults with the TRADINGAGENTS_* environment folded in.
 
@@ -83,9 +92,12 @@ def build_default_config() -> dict:
     the environment as it is now.
     """
     return _apply_env_overrides({
-        "results_dir": os.getenv("TRADINGAGENTS_RESULTS_DIR") or os.path.join(_TRADINGAGENTS_HOME, "logs"),
-        "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR") or os.path.join(_TRADINGAGENTS_HOME, "cache"),
-        "memory_log_path": os.getenv("TRADINGAGENTS_MEMORY_LOG_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md"),
+        "results_dir": _path_from_env("TRADINGAGENTS_RESULTS_DIR", os.path.join(_TRADINGAGENTS_HOME, "logs")),
+        "data_cache_dir": _path_from_env("TRADINGAGENTS_CACHE_DIR", os.path.join(_TRADINGAGENTS_HOME, "cache")),
+        "memory_log_path": _path_from_env(
+            "TRADINGAGENTS_MEMORY_LOG_PATH",
+            os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md"),
+        ),
         # Optional cap on the number of resolved memory log entries. When set,
         # the oldest resolved entries are pruned once this limit is exceeded.
         # Pending entries are never pruned. None disables rotation entirely.

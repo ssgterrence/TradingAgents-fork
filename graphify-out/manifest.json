@@ -2014,5 +2014,11 @@
     "seen": 1793018870.103298,
     "ast_hash": "b253e71541358b26091c36dcaf355ae0",
     "semantic_hash": ""
+  },
+  "opencode.json": {
+    "mtime": 1793020505.294186,
+    "seen": 1793074638.989026,
+    "ast_hash": "e4d4238c54b29d54b92fd180e80988d5",
+    "semantic_hash": ""
   }
 }
