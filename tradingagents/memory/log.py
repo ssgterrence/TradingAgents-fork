@@ -23,6 +23,12 @@ class TradingMemoryLog:
         path = cfg.get("memory_log_path")
         if path:
             self._log_path = Path(path).expanduser()
+            if self._log_path.is_dir():
+                raise ValueError(
+                    f"memory_log_path {self._log_path} is a directory; "
+                    "point TRADINGAGENTS_MEMORY_LOG_PATH at a file "
+                    "(e.g. .../logs/trading_memory.md), not at the logs folder"
+                )
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
         # Optional cap on resolved entries. None disables rotation.
         self._max_entries = cfg.get("memory_log_max_entries")

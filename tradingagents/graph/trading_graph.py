@@ -70,6 +70,13 @@ class TradingAgentsGraph:
         self.config = config or DEFAULT_CONFIG
         self.callbacks = callbacks or []
 
+        # Paths passed programmatically may carry ``~``. Expand them once here so
+        # every consumer (cache, results, reports, memory log) agrees on one
+        # location instead of one of them creating a literal ``~`` directory.
+        for key in ("results_dir", "data_cache_dir", "memory_log_path"):
+            if self.config.get(key):
+                self.config[key] = os.path.expanduser(str(self.config[key]))
+
         set_config(self.config)
 
         os.makedirs(self.config["data_cache_dir"], exist_ok=True)

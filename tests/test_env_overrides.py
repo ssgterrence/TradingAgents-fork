@@ -115,6 +115,22 @@ def test_empty_path_value_keeps_the_default_path(monkeypatch):
     assert config["memory_log_path"] == os.path.join(home, "memory", "trading_memory.md")
 
 
+def test_path_overrides_expand_a_leading_tilde(monkeypatch):
+    """``~`` must resolve like a shell path; otherwise the run writes into a
+    literal ``~/...`` directory under the working directory while the memory log
+    (which expands it) lands somewhere else."""
+    config = _config_with_env(
+        monkeypatch,
+        TRADINGAGENTS_RESULTS_DIR="~/results",
+        TRADINGAGENTS_CACHE_DIR="~/cache",
+        TRADINGAGENTS_MEMORY_LOG_PATH="~/memory/trading_memory.md",
+    )
+    home = os.path.expanduser("~")
+    assert config["results_dir"] == os.path.join(home, "results")
+    assert config["data_cache_dir"] == os.path.join(home, "cache")
+    assert config["memory_log_path"] == os.path.join(home, "memory", "trading_memory.md")
+
+
 def test_invalid_int_raises(monkeypatch):
     """Garbage int values should surface a ValueError at import, not silently misconfigure."""
     monkeypatch.setenv("TRADINGAGENTS_MAX_DEBATE_ROUNDS", "not-a-number")
