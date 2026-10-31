@@ -194,5 +194,72 @@ def logout(plan: Annotated[Plan, typer.Argument(help="The plan to sign out of")]
         console.print("Not signed in to ChatGPT.")
 
 
+@app.command("stocktwits-login")
+def stocktwits_login(
+    manual: bool = typer.Option(
+        False, "--manual",
+        help="Skip the local callback server; paste the redirect URL instead "
+        "(use over SSH, in Docker, or when the browser runs elsewhere).",
+    ),
+    timeout: int = typer.Option(
+        180, "--timeout", help="Seconds to wait for the browser sign-in",
+    ),
+    no_browser: bool = typer.Option(
+        False, "--no-browser", help="Print the address instead of opening a browser",
+    ),
+):
+    """Sign in to StockTwits' MCP server (OAuth) once, for the sentiment analyst."""
+    from tradingagents.dataflows.vendors import stocktwits_mcp
+
+    try:
+        stocktwits_mcp.login(
+            manual=manual,
+            timeout=timeout,
+            open_browser=not no_browser,
+            echo=lambda line: console.print(line, soft_wrap=True, markup=False, highlight=False),
+        )
+    except (stocktwits_mcp.StockTwitsMCPError, OSError, EOFError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print("[green]Signed in to StockTwits MCP.[/green]")
+
+
+@app.command("stocktwits-logout")
+def stocktwits_logout():
+    """Sign out of StockTwits: remove the locally stored MCP token."""
+    from tradingagents.dataflows.vendors import stocktwits_mcp
+
+    try:
+        removed = stocktwits_mcp.logout()
+    except stocktwits_mcp.StockTwitsMCPError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print(
+        "Signed out of StockTwits." if removed else "Not signed in to StockTwits."
+    )
+
+
+@app.command("stocktwits-status")
+def stocktwits_status():
+    """Show whether the StockTwits MCP token is configured and when it expires."""
+    from datetime import datetime
+
+    from tradingagents.dataflows.vendors import stocktwits_mcp
+
+    info = stocktwits_mcp.status()
+    if not info["source"]:
+        console.print(
+            "[yellow]Not signed in to StockTwits MCP.[/yellow] "
+            "Run `tradingagents stocktwits-login`."
+        )
+        return
+    source = "STOCKTWITS_MCP_TOKEN" if info["source"] == "env" else info["path"]
+    console.print(f"[green]Configured[/green] from {source}")
+    if info["expires_at"]:
+        when = datetime.fromtimestamp(info["expires_at"] / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        state = "[red]expired[/red]" if info["expired"] else "[green]valid[/green]"
+        console.print(f"Token expires {when} ({state}).")
+
+
 if __name__ == "__main__":
     app()

@@ -198,6 +198,8 @@ Shared or bursty endpoints sometimes refuse requests while at capacity (HTTP 429
 
 With `TYPESAFE_API_KEY` set, the Sentiment Analyst screens StockTwits and Reddit posts with TypeSafe's Jev before reading them. Posts that are not about the company are dropped, and each source opens with a count of the remaining posts by stance: bullish, bearish, neutral, or unclear. Without the key, posts pass through unscreened. `jev-latest` moves with new releases; set `TYPESAFE_DEFAULT_MODEL` to a versioned ID such as `jev-1.13.0` to hold it fixed across runs. To reach Jev through OpenRouter, put an OpenRouter key in `TYPESAFE_API_KEY` and set `TYPESAFE_BASE_URL=https://openrouter.ai/api`.
 
+StockTwits posts come through StockTwits' MCP server rather than the public REST feed, which Cloudflare blocks for ordinary clients. Sign in once with `tradingagents stocktwits-login` (OAuth; `--manual` pastes the redirect URL over SSH or in Docker); `tradingagents stocktwits-status` shows the token and `tradingagents stocktwits-logout` removes it. The token is kept in `~/.tradingagents/stocktwits-auth.json` and refreshed automatically. For CI, set `STOCKTWITS_MCP_TOKEN` to a short-lived access token instead.
+
 Alternatively, copy `.env.example` to `.env` and fill in your keys:
 ```bash
 cp .env.example .env
