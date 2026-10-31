@@ -7,6 +7,10 @@ Quick commands and reminders for this fork.
 ```bash
 cd /Users/genshi/Documents/_Self/ai-workspace/TradingAgents-fork
 # .env already holds keys (FRED, TypeSafe/Jev, SEC EDGAR user agent)
+
+# StockTwits over its MCP server (public REST is Cloudflare-blocked). Once only.
+tradingagents stocktwits-login
+tradingagents stocktwits-status
 ```
 
 For unattended (no terminal / cron / CI) runs, set these in `.env`:
@@ -123,16 +127,27 @@ Override roots with `TRADINGAGENTS_RESULTS_DIR`, `TRADINGAGENTS_CACHE_DIR`,
 ## 8. Data sources (already configured here)
 
 ```bash
+# StockTwits: sign in once over its MCP server (the public REST feed is Cloudflare-blocked)
+tradingagents stocktwits-login
+tradingagents stocktwits-status
+tradingagents stocktwits-logout
+
 # check FRED works
 curl -s "https://api.stlouisfed.org/fred/series?series_id=CPIAUCSL&api_key=$FRED_API_KEY&file_type=json" | head -c 200
 
 # check SEC EDGAR works
 curl -s -H "User-Agent: $SEC_EDGAR_USER_AGENT" https://www.sec.gov/files/company_tickers.json | head -c 200
+
+# check Polymarket works
+curl -s "https://gamma-api.polymarket.com/public-search?q=Fed%20rate%20cut&limit_per_type=5" | head -c 200
 ```
 
+- **StockTwits** → used by the **sentiment** analyst; now over MCP + OAuth (token at
+  `~/.tradingagents/stocktwits-auth.json`, auto-refreshed).
 - **FRED** → used by the **news** analyst.
 - **Jev** → used by the **sentiment** analyst only.
 - **SEC EDGAR** → used by the **fundamentals** analyst for statements.
+- **Polymarket** → used by the **news** analyst.
 
 ## 9. Reminders / gotchas
 

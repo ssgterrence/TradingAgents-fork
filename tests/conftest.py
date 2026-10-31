@@ -22,6 +22,9 @@ def _blank_settings_overlay():
     for name in names:
         if name.startswith("TRADINGAGENTS_"):
             os.environ[name] = ""
+    # Keep the offline StockTwits tests on the mocked REST path even on a machine
+    # where the developer has signed in to the MCP (a token file in their home).
+    os.environ.setdefault("STOCKTWITS_MCP_DISABLE", "1")
 
 
 _blank_settings_overlay()

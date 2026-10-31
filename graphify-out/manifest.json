@@ -2026,5 +2026,23 @@
     "seen": 1793179001.025451,
     "ast_hash": "952ee4d0a4e8c748d191d7fd0902fc7b",
     "semantic_hash": ""
+  },
+  "portfolio.example.json": {
+    "mtime": 1793418237.4365225,
+    "seen": 1793422054.9092412,
+    "ast_hash": "8e917590645f62e5b8c2f0ce089379c5",
+    "semantic_hash": ""
+  },
+  "BACK-TEST.md": {
+    "mtime": 1793422016.195729,
+    "seen": 1793422054.9097002,
+    "ast_hash": "2b7f1b000749e4839228e18e0b99aa1a",
+    "semantic_hash": ""
+  },
+  "CHEATSHEET.md": {
+    "mtime": 1793418237.4363139,
+    "seen": 1793422054.909704,
+    "ast_hash": "02106b7b2f49f1dcb138003177aecd33",
+    "semantic_hash": ""
   }
 }

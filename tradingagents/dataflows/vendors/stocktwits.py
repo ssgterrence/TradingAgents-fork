@@ -1,10 +1,14 @@
-"""StockTwits public symbol-stream fetcher.
+"""StockTwits symbol-stream fetcher.
 
-StockTwits exposes a per-symbol message stream at
-``api.stocktwits.com/api/2/streams/symbol/{ticker}.json`` that requires no
-API key, no OAuth, and no registration. Each message includes a
-user-labeled sentiment field (``Bullish``/``Bearish``/null), the message
-body, timestamp, and posting user.
+The public feed at ``api.stocktwits.com/api/2/streams/symbol/{ticker}.json``
+is fronted by Cloudflare, which answers ordinary clients with ``403``. The
+supported path is StockTwits' remote MCP server (see ``stocktwits_mcp``): once
+signed in with ``tradingagents stocktwits-login``, messages are fetched over
+MCP. The REST call is kept as a fallback for environments that are not signed
+in, and for the existing offline tests.
+
+Each message includes a user-labeled sentiment field (``Bullish``/``Bearish``/
+null), the message body, timestamp, and posting user.
 
 The function is deliberately self-contained: short timeout, graceful
 degradation on any HTTP or parse failure, and a string return type so
@@ -24,6 +28,7 @@ from urllib.request import Request, urlopen
 
 from tradingagents.dataflows.date_window import coverage_gap, in_window
 from tradingagents.dataflows.symbols import crypto_base
+from tradingagents.dataflows.vendors import stocktwits_mcp
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +76,24 @@ def _stocktwits_symbol(ticker: str) -> str:
     return f"{base}.X" if base else ticker.strip().upper()
 
 
+def _fetch_rest_messages(ticker: str, limit: int, timeout: float) -> list[dict]:
+    """The legacy public REST feed, used only when MCP is not configured."""
+    url = _API.format(ticker=_stocktwits_symbol(ticker))
+    req = Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read())
+    return data.get("messages", []) if isinstance(data, dict) else []
+
+
+def _fetch_messages(ticker: str, limit: int, timeout: float) -> list[dict]:
+    """Messages over the StockTwits MCP when signed in, else the REST feed."""
+    if stocktwits_mcp.available():
+        return stocktwits_mcp.fetch_messages(
+            _stocktwits_symbol(ticker), limit=limit, timeout=timeout
+        )
+    return _fetch_rest_messages(ticker, limit, timeout)
+
+
 def fetch_stocktwits_messages(
     ticker: str,
     limit: int = 30,
@@ -94,18 +117,19 @@ def fetch_stocktwits_messages(
     symbol has no messages, or the response shape is unexpected — the
     caller never has to special-case None or exceptions.
     """
-    url = _API.format(ticker=_stocktwits_symbol(ticker))
-    req = Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
     try:
-        with urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
+        fetched = _fetch_messages(ticker, limit=limit, timeout=timeout)
+    except stocktwits_mcp.StockTwitsAuthRequired as exc:
+        logger.warning("StockTwits MCP is not signed in: %s", exc)
+        return f"<stocktwits unavailable: not signed in to the StockTwits MCP; run `tradingagents stocktwits-login` ({exc})>"
+    except stocktwits_mcp.StockTwitsMCPError as exc:
+        logger.warning("StockTwits MCP fetch failed for %s: %s", ticker, exc)
+        return f"<stocktwits unavailable: {type(exc).__name__}>"
     except (OSError, http.client.HTTPException, json.JSONDecodeError) as exc:
         # OSError covers URLError/TimeoutError/connection resets; HTTPException
         # covers chunked-transfer errors (IncompleteRead/BadStatusLine, #1024).
         logger.warning("StockTwits fetch failed for %s: %s", ticker, exc)
         return f"<stocktwits unavailable: {type(exc).__name__}>"
-
-    fetched = data.get("messages", []) if isinstance(data, dict) else []
     messages = _within_window(fetched, start_date, end_date)
     if not messages:
         if start_date and end_date:
