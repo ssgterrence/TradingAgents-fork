@@ -1,0 +1,16 @@
+{
+  "cash": 25000.0,
+  "currency": "USD",
+  "positions": [
+    {
+      "ticker": "GOOGL",
+      "quantity": 40,
+      "average_price": 185.5
+    },
+    {
+      "ticker": "NVDA",
+      "quantity": 120,
+      "average_price": 150.0
+    }
+  ]
+}
