@@ -2020,5 +2020,11 @@
     "seen": 1793154356.62196,
     "ast_hash": "ffe648bbb893fae8922ced55d6da2196",
     "semantic_hash": ""
+  },
+  ".vscode/settings.json": {
+    "mtime": 1793155377.2319646,
+    "seen": 1793179001.025451,
+    "ast_hash": "952ee4d0a4e8c748d191d7fd0902fc7b",
+    "semantic_hash": ""
   }
 }
