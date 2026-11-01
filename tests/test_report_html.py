@@ -172,3 +172,42 @@ def test_the_packaged_logo_stays_inert(tmp_path):
     tags = set(re.findall(r"<\s*([a-zA-Z][\w:-]*)", logo))
     assert tags <= {"svg", "path", "rect", "circle", "g", "defs", "clipPath", "linearGradient", "stop"}
     assert not re.search(r"\son\w+\s*=|href|url\(|@import|javascript:|<!entity|<!doctype", logo, re.IGNORECASE)
+
+
+CHART_DATA = {
+    "ticker": "NVDA", "as_of": "2026-09-26",
+    "stats": [{"label": "Last close", "value": "181.20", "note": "2026-09-26", "tone": ""}],
+    "price": {"dates": [f"2026-08-{d:02d}" for d in range(1, 31)],
+              "close": [170 + d for d in range(30)],
+              "volume": [1_000_000 + d for d in range(30)]},
+    "overlays": [{"name": "10 EMA", "values": [170 + d for d in range(30)],
+                  "tone": "--accent", "dash": "1 0"}],
+    "bands": {"upper": [200] * 30, "lower": [160] * 30},
+    "levels": [{"price": 180.0, "label": "floor", "kind": "support"}],
+    "rsi": {"dates": [f"2026-08-{d:02d}" for d in range(1, 31)],
+            "values": [50.0] * 30},
+    "macd": {"dates": [f"2026-08-{d:02d}" for d in range(1, 31)],
+             "macd": [1.0] * 30, "signal": [0.5] * 30, "histogram": [0.5] * 30},
+    "distances": [{"label": "10 EMA", "value": -1.2}],
+    "gauge": {"value": 48.0, "label": "RSI · neutral zone"},
+    "scenarios": [{"label": "Base", "prob": 60, "tone": "--ink"}],
+}
+
+
+@pytest.mark.unit
+def test_chart_data_adds_the_overview_and_keeps_the_page_self_contained(tmp_path):
+    page = _html(tmp_path, chart_data=CHART_DATA)
+    assert 'id="overview"' in page and "At a glance" in page
+    assert 'class="c-price"' in page and 'class="c-axis"' in page
+    assert "181.20" in page and "floor" in page
+    assert "Content-Security-Policy" in page and "default-src 'none'" in page
+    assert "<script" not in page.lower()
+    assert not re.search(r'<(img|link|iframe|object|embed)\b', page, re.IGNORECASE)
+
+
+@pytest.mark.unit
+def test_the_page_still_renders_without_chart_data(tmp_path):
+    page = _html(tmp_path)
+    assert 'id="overview"' not in page
+    assert "<svg" in page  # the logo is still drawn in the page
+    assert "At a glance" not in page

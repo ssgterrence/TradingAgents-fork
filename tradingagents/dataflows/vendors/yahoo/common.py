@@ -2,12 +2,20 @@
 
 import logging
 import time
+import warnings
 
 import yfinance as yf
+from pandas.errors import Pandas4Warning
 from yfinance.exceptions import YFPricesMissingError, YFRateLimitError
 
 from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
 from tradingagents.dataflows.net import vendor_reachable
+
+# yfinance 1.7.0 still passes inplace= to DataFrame.sort_index/set_index/drop/
+# rename, which pandas 3.1 deprecates (PDEP-8). Until that is fixed upstream
+# every price pull logs a wall of Pandas4Warning; ignore it only where yfinance
+# raises it, so the same deprecation in our own code still surfaces.
+warnings.filterwarnings("ignore", category=Pandas4Warning, module=r"yfinance(\.|$)")
 
 logger = logging.getLogger(__name__)
 
