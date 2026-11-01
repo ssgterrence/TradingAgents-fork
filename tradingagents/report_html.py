@@ -12,6 +12,7 @@ from importlib.resources import files
 
 from markdown_it import MarkdownIt
 
+from tradingagents import charts
 from tradingagents.agents.rating import run_rating
 from tradingagents.reporting import analyst_names
 
@@ -159,6 +160,55 @@ th, td { padding: 0.45rem 0.7rem; text-align: left; vertical-align: top; border-
 th { font-weight: 600; border-bottom-color: var(--muted); }
 tbody tr:last-child td { border-bottom: 0; }
 
+/* Charts are inline SVG: one palette, no script, no remote asset. */
+.chart { max-width: 34rem; margin: 0 auto 1.75rem; }
+.chart.wide { max-width: none; }
+.chart .plot { overflow-x: auto; overscroll-behavior-x: contain; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart figcaption { margin-top: 0.45rem; font: 0.82rem/1.45 var(--sans); color: var(--muted); }
+.chart figcaption b { color: var(--ink); font-weight: 600; }
+.scroll-hint { display: none; }
+.charts.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.62fr);
+  gap: 1.25rem; align-items: start; margin: 0 0 1.75rem; max-width: 44rem; }
+.charts.pair .chart { max-width: none; margin: 0; }
+.chart-svg text { font-kerning: normal; }
+.c-grid { stroke: var(--rule); stroke-width: 1; }
+.c-axis { fill: var(--muted); font-variant-numeric: tabular-nums; }
+.c-price { stroke: var(--ink); }
+.c-overlay { fill: none; }
+.c-indicator { stroke: var(--accent); fill: none; }
+.c-indicator-dot { fill: var(--accent); }
+.c-dot { fill: var(--ink); }
+.c-dot-support { fill: var(--up); }
+.c-dot-resistance { fill: var(--down); }
+.c-level { stroke: var(--muted); stroke-width: 0.8; }
+.c-level-support { stroke: var(--up); stroke-width: 0.9; stroke-dasharray: 4 4; opacity: 0.75; }
+.c-level-resistance { stroke: var(--down); stroke-width: 0.9; stroke-dasharray: 4 4; opacity: 0.75; }
+.c-band { fill: var(--accent); opacity: 0.08; }
+.c-volume-up { fill: var(--up); opacity: 0.35; }
+.c-volume-down { fill: var(--down); opacity: 0.35; }
+.c-zone-up { fill: var(--up); opacity: 0.06; }
+.c-zone-down { fill: var(--down); opacity: 0.06; }
+.c-gauge-track { stroke: var(--rule); }
+.c-gauge-up { stroke: var(--up); opacity: 0.55; }
+.c-gauge-down { stroke: var(--down); opacity: 0.55; }
+.c-needle { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; }
+.c-bar-up { fill: var(--up); opacity: 0.75; }
+.c-bar-down { fill: var(--down); opacity: 0.75; }
+.c-track { fill: var(--wash); stroke: var(--rule); stroke-width: 0.6; }
+.c-current-row { fill: var(--wash); }
+
+/* The one-screen summary: six numbers, then the hero chart. */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.6rem; margin: 1.1rem 0 1.6rem; }
+.kpi { padding: 0.65rem 0.8rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--wash); }
+.kpi .value { font: 600 1.3rem/1.2 var(--sans); font-variant-numeric: tabular-nums; }
+.kpi .label { font: 0.7rem/1.35 var(--sans); letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--muted); }
+.kpi .note { font: 0.75rem/1.35 var(--sans); color: var(--muted); }
+.kpi.up .value { color: var(--up); }
+.kpi.down .value { color: var(--down); }
+
 @media (max-width: 34rem) {
   body { font-size: 16px; }
   .page { padding: 2rem 1rem 3rem; }
@@ -167,6 +217,14 @@ tbody tr:last-child td { border-bottom: 0; }
   .run { grid-template-columns: 1fr; gap: 0 0; }
   .run dd { margin-bottom: 0.45rem; }
   .run .group { white-space: normal; }
+}
+@media (max-width: 48rem) {
+  .charts.pair { grid-template-columns: 1fr; }
+  /* The wide panels keep a readable scale and scroll sideways instead of
+     shrinking 9px labels to 5px. */
+  .chart.wide .plot svg { min-width: 44rem; }
+  .scroll-hint { display: inline; color: var(--muted); }
+  .charts.pair > .chart + .chart { max-width: 20rem; margin-inline: auto; }
 }
 @media print {
   :root { --paper: #fff; --ink: #000; --muted: #444; --rule: #bbb; --accent: #000; --wash: #f2f2f2;
@@ -180,6 +238,7 @@ tbody tr:last-child td { border-bottom: 0; }
   main h3, main h4 { break-after: avoid; }
   a { color: inherit; text-decoration: none; }
   table { break-inside: avoid; }
+  .chart { break-inside: avoid; }
 }
 """
 
@@ -245,6 +304,103 @@ def _run_details(final_state: dict, settings: dict | None) -> list[tuple[str, st
     return details
 
 
+def _figure(svg: str, caption: str, *, wide: bool = False) -> str:
+    """A chart and the sentence that tells the reader what it shows."""
+    if not svg:
+        return ""
+    hint = (' <span class="scroll-hint">Scroll sideways to see the whole window.</span>'
+            if wide else "")
+    return (f'<figure class="chart{" wide" if wide else ""}">'
+            f'<div class="plot">{svg}</div>'
+            f"<figcaption>{caption}{hint}</figcaption></figure>")
+
+
+def _kpis(stats) -> str:
+    cards = "".join(
+        f'<div class="kpi {escape(str(item.get("tone", "")))}">'
+        f'<div class="label">{escape(item["label"])}</div>'
+        f'<div class="value">{escape(item["value"])}</div>'
+        f'<div class="note">{escape(item.get("note", ""))}</div></div>'
+        for item in stats
+    )
+    return f'<div class="kpis">{cards}</div>'
+
+
+def _levels(data: dict) -> list[tuple[float, str, str]]:
+    return [(float(row["price"]), str(row["label"]), str(row["kind"]))
+            for row in data.get("levels", [])]
+
+
+def _dashboard(data: dict) -> str:
+    """The one-screen summary: the numbers, the price, the ladder, the odds."""
+    price = data.get("price") or {}
+    close = price.get("close") or []
+    if len(close) < 2:
+        return ""
+    ticker = data.get("ticker", "")
+    levels = _levels(data)
+    overlays = [(row["name"], row["values"], row["tone"], row["dash"])
+                for row in data.get("overlays", [])]
+    hero = charts.price_chart(
+        price["dates"], close, volume=price.get("volume"), overlays=overlays,
+        bands=data.get("bands"), levels=levels,
+        title=f"{ticker} price, averages, Bollinger band and key levels",
+        desc="Daily close against the 10 EMA, 50/200 SMA and the report's levels.",
+    )
+    ladder = charts.level_ladder(levels, close[-1])
+    gauge = data.get("gauge") or {}
+    gauge_svg = charts.gauge(gauge.get("value", 0), label=gauge.get("label", ""),
+                             title="RSI gauge")
+    scenarios = data.get("scenarios") or []
+    scenario_svg = charts.prob_bars(
+        [(row["label"], row["prob"], row.get("tone", "--accent")) for row in scenarios],
+        title="Scenario probabilities",
+    ) if scenarios else ""
+
+    blocks = [
+        '<section id="overview"><h2>At a glance</h2>',
+        _kpis(data.get("stats", [])),
+        _figure(hero, "<b>Price against every average that matters.</b> The last close is "
+                      "marked, with the report's own levels drawn as dashed rules; the "
+                      "lower panel is volume, coloured by the day's direction.", wide=True),
+        '<div class="charts pair">',
+        _figure(ladder, "<b>Key levels, nearest first.</b> Distance from the last close, "
+                        "so the support and resistance map is one glance."),
+        _figure(gauge_svg, "Momentum, on the same 0–100 scale the RSI uses."),
+        "</div>",
+    ]
+    if scenario_svg:
+        blocks.append(_figure(scenario_svg, "<b>The report's own odds.</b> Base case, "
+                                            "failure at the supply wall, and the breakdown tail."))
+    blocks.append("</section>")
+    return "".join(blocks)
+
+
+def _market_charts(data: dict) -> str:
+    """The indicator panels that sit under the Market Analyst's heading."""
+    rsi = data.get("rsi") or {}
+    macd = data.get("macd") or {}
+    distances = data.get("distances") or []
+    blocks = []
+    rsi_svg = charts.rsi_panel(rsi.get("dates", []), rsi.get("values", []))
+    if rsi_svg:
+        blocks.append(_figure(rsi_svg, "<b>Momentum is washed out, not yet improving.</b> "
+                                       "The 30/70 lines are the oversold and overbought "
+                                       "thresholds; the last print is labelled.", wide=True))
+    macd_svg = charts.macd_panel(macd.get("dates", []), macd.get("macd", []),
+                                 macd.get("signal", []), macd.get("histogram", []))
+    if macd_svg:
+        blocks.append(_figure(macd_svg, "<b>The crossover is complete and still below zero.</b> "
+                                       "Bars are the histogram; the dashed line is the signal.",
+                              wide=True))
+    if distances:
+        blocks.append(_figure(
+            charts.diverging_bars([(row["label"], row["value"]) for row in distances]),
+            "<b>Price sits below every benchmark.</b> Bars left of zero are the distance "
+            "from each average or band, in per cent.", wide=True))
+    return "".join(blocks)
+
+
 def render_report(ticker: str, final_state: dict, settings: dict | None, parts) -> str:
     """The report page: title and rating, what produced the run, contents, sections."""
     md = _markdown()
@@ -262,6 +418,11 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
     )
 
     contents, body = [], []
+    chart_data = final_state.get("chart_data") or {}
+    if chart_data.get("stats"):
+        contents.append('<li><a href="#overview"><span class="num">0</span> '
+                        '<span class="label">At a glance</span></a></li>')
+        body.append(_dashboard(chart_data))
     for n, (heading, _folder, written) in enumerate(parts, 1):
         agents = "".join(
             f'<li><a href="#s{n}-{m}"><span class="bar"></span> <span class="label">{escape(agent)}</span></a></li>'
@@ -272,7 +433,10 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
                         f'<span class="label">{escape(name)}</span></a><ul>{agents}</ul></li>')
         body.append(f'<section id="s{n}"><h2>{escape(heading)}</h2>')
         for m, (agent, _filename, text) in enumerate(written, 1):
-            body.append(f'<h3 id="s{n}-{m}">{escape(agent)}</h3>\n{_render_agent_text(md, text)}')
+            body.append(f'<h3 id="s{n}-{m}">{escape(agent)}</h3>')
+            if chart_data and agent == "Market Analyst":
+                body.append(_market_charts(chart_data))
+            body.append(_render_agent_text(md, text))
         body.append("</section>")
 
     page_title = " ".join(x for x in (ticker, date, rating) if x)
