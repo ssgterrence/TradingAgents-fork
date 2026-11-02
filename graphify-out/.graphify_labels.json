@@ -22,7 +22,6 @@
   "51": "test_api_key_env.py",
   "53": "test_env_overrides.py",
   "55": "tradingagents-ollama",
-  "57": "ConditionalLogic",
   "63": "test_fundamentals_lookahead.py",
   "66": "AnthropicClient",
   "71": "StatsCallbackHandler",
