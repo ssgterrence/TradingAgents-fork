@@ -104,6 +104,21 @@ def analyze(
         raise typer.Exit(code=1) from None
 
 
+@app.command("rebuild-report")
+def rebuild_report(
+    path: str = typer.Argument(..., help="Saved report directory, e.g. logs/reports/ANET_20261028_220423"),
+):
+    """Re-render complete_report.html from saved markdown, without an LLM run."""
+    from tradingagents.reporting import rebuild_html
+
+    try:
+        target = rebuild_html(path)
+    except Exception as exc:
+        console.print(f"[red]Could not rebuild the report:[/red] {exc}")
+        raise typer.Exit(code=1) from None
+    console.print(f"[green]✓ HTML rebuilt:[/green] {target.resolve()}")
+
+
 @app.command()
 def backtest(
     tickers: str = typer.Argument(..., help="Comma-separated tickers, e.g. NVDA,AAPL"),

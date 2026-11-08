@@ -12,7 +12,7 @@ from importlib.resources import files
 
 from markdown_it import MarkdownIt
 
-from tradingagents import charts
+from tradingagents import report_visuals as visuals
 from tradingagents.agents.rating import run_rating
 from tradingagents.reporting import analyst_names
 
@@ -130,6 +130,89 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .credit a.brand { color: var(--accent); }
 .credit a:hover, .credit a:focus-visible { text-decoration: underline; }
 
+/* Visual summaries: the page leads with cards and charts, and the full prose
+   stays one click away. Everything here is plain HTML/CSS and inline SVG. */
+.visual-summary { margin: 0 0 1.5rem; }
+.visual-summary:empty { display: none; }
+.vheading { margin: 1.5rem 0 0.6rem; font: 600 0.95rem/1.4 var(--sans); }
+.muted { color: var(--muted); }
+.data-note { margin: 0 0 1rem; padding: 0.55rem 0.8rem; border-left: 3px solid var(--down);
+  background: var(--wash); color: var(--muted); font: 0.82rem/1.5 var(--sans); border-radius: 0 4px 4px 0; }
+.source-note { margin: 0 0 1rem; color: var(--muted); font: 0.76rem/1.5 var(--sans); }
+
+.vgrid { display: grid; gap: 0.65rem; margin: 0 0 1.25rem; }
+.vgrid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+.vgrid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.vcard { padding: 0.8rem 0.9rem; border: 1px solid var(--rule); border-radius: 6px;
+  background: var(--wash); }
+.vcard.up { border-left: 3px solid var(--up); }
+.vcard.down { border-left: 3px solid var(--down); }
+.vcard.watch { border-left: 3px solid var(--mark); }
+.vcard.neutral { border-left: 3px solid var(--edge); }
+.vcard-title { font: 600 0.92rem/1.35 var(--sans); margin-bottom: 0.35rem; }
+.vcard-meta { font: 0.72rem/1.35 var(--sans); color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.04em; margin-bottom: 0.25rem; }
+.vcard-body p { margin: 0 0 0.45rem; font: 0.86rem/1.5 var(--sans); }
+.vcard-body p:last-child { margin-bottom: 0; }
+.vcard-body ul { margin: 0.25rem 0 0; padding-left: 1.1rem; font: 0.84rem/1.5 var(--sans); }
+.vcard-body li { margin: 0.15rem 0; }
+
+.scorecard { margin: 0 0 1.25rem; border: 1px solid var(--rule); border-radius: 6px;
+  overflow: hidden; font: 0.82rem/1.4 var(--sans); }
+.score-head, .score-row { display: grid; grid-template-columns: 1.1fr 0.7fr 0.8fr 1.6fr;
+  gap: 0.5rem; align-items: baseline; padding: 0.4rem 0.7rem; }
+.score-head { background: var(--wash); color: var(--muted); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.7rem; }
+.score-row { border-top: 1px solid var(--rule); }
+.score-label { font-weight: 600; }
+.score-value { font-variant-numeric: tabular-nums; }
+.score-signal { font-weight: 600; }
+.score-signal.up { color: var(--up); }
+.score-signal.down { color: var(--down); }
+.score-signal.watch { color: var(--mark); }
+.score-signal.neutral { color: var(--muted); }
+.score-note { color: var(--muted); font-size: 0.78rem; }
+
+.pills { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 1rem; }
+.pill { padding: 0.15rem 0.55rem; border: 1px solid var(--edge); border-radius: 999px;
+  font: 0.75rem/1.5 var(--sans); color: var(--muted); background: var(--wash); }
+.pill.up { border-color: var(--up); color: var(--up); }
+.pill.down { border-color: var(--down); color: var(--down); }
+.pill.neutral { border-color: var(--edge); }
+
+.timeline { list-style: none; margin: 0 0 1.25rem; padding: 0; border-left: 2px solid var(--rule); }
+.timeline li { position: relative; padding: 0 0 0.65rem 1rem; font: 0.84rem/1.45 var(--sans); }
+.timeline li::before { content: ""; position: absolute; left: -5px; top: 0.35rem; width: 8px;
+  height: 8px; border-radius: 50%; background: var(--accent); }
+.timeline .when { display: block; color: var(--accent); font-weight: 600; font-size: 0.78rem; }
+.timeline .what { color: var(--muted); }
+
+.debate { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem; margin: 0 0 1.5rem; }
+.debate-side h4 { margin: 0 0 0.5rem; font: 600 0.9rem/1.4 var(--sans); }
+.debate-side.up h4 { color: var(--up); }
+.debate-side.down h4 { color: var(--down); }
+.debate-side .vcard { margin-bottom: 0.5rem; }
+.decision-meta { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0.5rem 0;
+  font: 0.82rem/1.4 var(--sans); color: var(--muted); }
+.decision-meta b { color: var(--ink); }
+
+/* The full prose is collapsed by default; print forces it open. */
+.full-text { margin: 1.25rem 0 0; padding-top: 0.65rem; border-top: 1px solid var(--rule); }
+.full-text > summary { cursor: pointer; color: var(--muted); font: 0.82rem/1.4 var(--sans);
+  list-style: none; display: flex; align-items: center; gap: 0.4rem; }
+.full-text > summary::-webkit-details-marker { display: none; }
+.full-text > summary::before { content: "▸"; color: var(--accent); font-size: 0.8rem; }
+.full-text[open] > summary::before { content: "▾"; }
+.full-text > summary:hover { color: var(--accent); }
+.full-text .prose { margin-top: 0.9rem; }
+.full-text .prose > :first-child { margin-top: 0; }
+
+@media (max-width: 40rem) {
+  .score-head, .score-row { grid-template-columns: 1fr 0.8fr 0.8fr; }
+  .score-note { display: none; }
+}
+
 /* Three levels of separation: the five groups, the agents within a group, and
    breaks an agent draws inside its own text. */
 main h2 {
@@ -203,6 +286,7 @@ tbody tr:last-child td { border-bottom: 0; }
   gap: 0.6rem; margin: 1.1rem 0 1.6rem; }
 .kpi { padding: 0.65rem 0.8rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--wash); }
 .kpi .value { font: 600 1.3rem/1.2 var(--sans); font-variant-numeric: tabular-nums; }
+.kpi.text .value { font: 600 0.92rem/1.35 var(--sans); }
 .kpi .label { font: 0.7rem/1.35 var(--sans); letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--muted); }
 .kpi .note { font: 0.75rem/1.35 var(--sans); color: var(--muted); }
@@ -239,6 +323,8 @@ tbody tr:last-child td { border-bottom: 0; }
   a { color: inherit; text-decoration: none; }
   table { break-inside: avoid; }
   .chart { break-inside: avoid; }
+  .full-text > summary { display: none; }
+  .full-text > .prose { display: block !important; }
 }
 """
 
@@ -282,7 +368,8 @@ def _group(name: str, values_html: str) -> str:
 
 def _run_details(final_state: dict, settings: dict | None) -> list[tuple[str, str]]:
     """The run details as (label, value HTML); every value from the run is escaped."""
-    details = [("Generated", escape(datetime.now().strftime("%Y-%m-%d %H:%M")))]
+    generated = final_state.get("generated_at") or datetime.now().strftime("%Y-%m-%d %H:%M")
+    details = [("Generated", escape(generated))]
     if settings:
         s = settings.get
         for tier in ("deep", "quick"):
@@ -304,104 +391,8 @@ def _run_details(final_state: dict, settings: dict | None) -> list[tuple[str, st
     return details
 
 
-def _figure(svg: str, caption: str, *, wide: bool = False) -> str:
-    """A chart and the sentence that tells the reader what it shows."""
-    if not svg:
-        return ""
-    hint = (' <span class="scroll-hint">Scroll sideways to see the whole window.</span>'
-            if wide else "")
-    return (f'<figure class="chart{" wide" if wide else ""}">'
-            f'<div class="plot">{svg}</div>'
-            f"<figcaption>{caption}{hint}</figcaption></figure>")
-
-
-def _kpis(stats) -> str:
-    cards = "".join(
-        f'<div class="kpi {escape(str(item.get("tone", "")))}">'
-        f'<div class="label">{escape(item["label"])}</div>'
-        f'<div class="value">{escape(item["value"])}</div>'
-        f'<div class="note">{escape(item.get("note", ""))}</div></div>'
-        for item in stats
-    )
-    return f'<div class="kpis">{cards}</div>'
-
-
-def _levels(data: dict) -> list[tuple[float, str, str]]:
-    return [(float(row["price"]), str(row["label"]), str(row["kind"]))
-            for row in data.get("levels", [])]
-
-
-def _dashboard(data: dict) -> str:
-    """The one-screen summary: the numbers, the price, the ladder, the odds."""
-    price = data.get("price") or {}
-    close = price.get("close") or []
-    if len(close) < 2:
-        return ""
-    ticker = data.get("ticker", "")
-    levels = _levels(data)
-    overlays = [(row["name"], row["values"], row["tone"], row["dash"])
-                for row in data.get("overlays", [])]
-    hero = charts.price_chart(
-        price["dates"], close, volume=price.get("volume"), overlays=overlays,
-        bands=data.get("bands"), levels=levels,
-        title=f"{ticker} price, averages, Bollinger band and key levels",
-        desc="Daily close against the 10 EMA, 50/200 SMA and the report's levels.",
-    )
-    ladder = charts.level_ladder(levels, close[-1])
-    gauge = data.get("gauge") or {}
-    gauge_svg = charts.gauge(gauge.get("value", 0), label=gauge.get("label", ""),
-                             title="RSI gauge")
-    scenarios = data.get("scenarios") or []
-    scenario_svg = charts.prob_bars(
-        [(row["label"], row["prob"], row.get("tone", "--accent")) for row in scenarios],
-        title="Scenario probabilities",
-    ) if scenarios else ""
-
-    blocks = [
-        '<section id="overview"><h2>At a glance</h2>',
-        _kpis(data.get("stats", [])),
-        _figure(hero, "<b>Price against every average that matters.</b> The last close is "
-                      "marked, with the report's own levels drawn as dashed rules; the "
-                      "lower panel is volume, coloured by the day's direction.", wide=True),
-        '<div class="charts pair">',
-        _figure(ladder, "<b>Key levels, nearest first.</b> Distance from the last close, "
-                        "so the support and resistance map is one glance."),
-        _figure(gauge_svg, "Momentum, on the same 0–100 scale the RSI uses."),
-        "</div>",
-    ]
-    if scenario_svg:
-        blocks.append(_figure(scenario_svg, "<b>The report's own odds.</b> Base case, "
-                                            "failure at the supply wall, and the breakdown tail."))
-    blocks.append("</section>")
-    return "".join(blocks)
-
-
-def _market_charts(data: dict) -> str:
-    """The indicator panels that sit under the Market Analyst's heading."""
-    rsi = data.get("rsi") or {}
-    macd = data.get("macd") or {}
-    distances = data.get("distances") or []
-    blocks = []
-    rsi_svg = charts.rsi_panel(rsi.get("dates", []), rsi.get("values", []))
-    if rsi_svg:
-        blocks.append(_figure(rsi_svg, "<b>Momentum is washed out, not yet improving.</b> "
-                                       "The 30/70 lines are the oversold and overbought "
-                                       "thresholds; the last print is labelled.", wide=True))
-    macd_svg = charts.macd_panel(macd.get("dates", []), macd.get("macd", []),
-                                 macd.get("signal", []), macd.get("histogram", []))
-    if macd_svg:
-        blocks.append(_figure(macd_svg, "<b>The crossover is complete and still below zero.</b> "
-                                       "Bars are the histogram; the dashed line is the signal.",
-                              wide=True))
-    if distances:
-        blocks.append(_figure(
-            charts.diverging_bars([(row["label"], row["value"]) for row in distances]),
-            "<b>Price sits below every benchmark.</b> Bars left of zero are the distance "
-            "from each average or band, in per cent.", wide=True))
-    return "".join(blocks)
-
-
-def render_report(ticker: str, final_state: dict, settings: dict | None, parts) -> str:
+def render_report(ticker: str, final_state: dict, settings: dict | None, parts,
+                  chart_data: dict | None = None) -> str:
     """The report page: title and rating, what produced the run, contents, sections."""
     md = _markdown()
     rating = run_rating(final_state) if final_state.get("final_trade_decision") else ""
@@ -418,11 +409,12 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
     )
 
     contents, body = [], []
-    chart_data = final_state.get("chart_data") or {}
-    if chart_data.get("stats"):
+    chart_data = chart_data if chart_data is not None else (final_state.get("chart_data") or {})
+    overview = visuals.dashboard(chart_data, final_state)
+    if overview:
         contents.append('<li><a href="#overview"><span class="num">0</span> '
                         '<span class="label">At a glance</span></a></li>')
-        body.append(_dashboard(chart_data))
+        body.append(overview)
     for n, (heading, _folder, written) in enumerate(parts, 1):
         agents = "".join(
             f'<li><a href="#s{n}-{m}"><span class="bar"></span> <span class="label">{escape(agent)}</span></a></li>'
@@ -432,11 +424,20 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
         contents.append(f'<li><a href="#s{n}"><span class="num">{escape(numeral)}</span> '
                         f'<span class="label">{escape(name)}</span></a><ul>{agents}</ul></li>')
         body.append(f'<section id="s{n}"><h2>{escape(heading)}</h2>')
+        summary = visuals.section_summary(heading, final_state)
+        if summary:
+            body.append(f'<div class="visual-summary">{summary}</div>')
         for m, (agent, _filename, text) in enumerate(written, 1):
             body.append(f'<h3 id="s{n}-{m}">{escape(agent)}</h3>')
-            if chart_data and agent == "Market Analyst":
-                body.append(_market_charts(chart_data))
-            body.append(_render_agent_text(md, text))
+            agent_visuals = visuals.agent_summary(agent, text, chart_data, final_state)
+            if agent_visuals:
+                body.append(f'<div class="visual-summary">{agent_visuals}</div>')
+            minutes = max(1, round(len((text or "").split()) / 230))
+            body.append(
+                f'<details class="full-text" id="full-s{n}-{m}">'
+                f'<summary>Read the full {escape(agent)} analysis · {minutes} min</summary>'
+                f'<div class="prose">{_render_agent_text(md, text)}</div></details>'
+            )
         body.append("</section>")
 
     page_title = " ".join(x for x in (ticker, date, rating) if x)

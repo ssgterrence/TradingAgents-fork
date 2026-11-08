@@ -6,6 +6,7 @@ CLI and ``TradingAgentsGraph.save_reports`` both call this, so a headless / API
 run produces the same on-disk report tree a CLI run does.
 """
 
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -113,8 +114,116 @@ def write_report_tree(final_state: dict, ticker: str, save_path, settings: dict 
     )
     if html:
         from tradingagents.report_html import render_report
+        from tradingagents.report_visuals import build_chart_data_for_report
 
+        chart_data = final_state.get("chart_data")
+        if chart_data is None:
+            try:
+                chart_data = build_chart_data_for_report(ticker, final_state)
+            except Exception:
+                # A chart must never stop a report from being written.
+                chart_data = {}
         (save_path / "complete_report.html").write_text(
-            render_report(ticker, final_state, settings, parts), encoding="utf-8"
+            render_report(ticker, final_state, settings, parts, chart_data=chart_data),
+            encoding="utf-8",
         )
     return save_path / "complete_report.md"
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def state_from_report_tree(report_dir) -> tuple[str, dict]:
+    """Rebuild a minimal ``final_state`` from an already saved report tree.
+
+    This is what makes an old run re-renderable without calling an LLM: the
+    markdown files are the source, and the HTML page is rebuilt from them.
+    """
+    report_dir = Path(report_dir)
+    complete = _read(report_dir / "complete_report.md")
+    ticker_match = re.search(r"^#\s+Trading Analysis Report:\s*(\S+)", complete, re.MULTILINE)
+    ticker = ticker_match.group(1) if ticker_match else report_dir.name.split("_")[0]
+    date_match = re.search(r"^-\s+Analysis date:\s*(\d{4}-\d{2}-\d{2})", complete, re.MULTILINE)
+    generated_match = re.search(r"^-\s+Generated:\s*(.+)$", complete, re.MULTILINE)
+    memory_match = re.search(r"^-\s+Memory log:\s*(.+)$", complete, re.MULTILINE)
+    state: dict = {
+        "company_of_interest": ticker,
+        "trade_date": date_match.group(1) if date_match else "",
+        "generated_at": generated_match.group(1).strip() if generated_match else "",
+        "memory_note": memory_match.group(1).strip() if memory_match else "",
+        "market_report": _read(report_dir / "1_analysts" / "market.md"),
+        "sentiment_report": _read(report_dir / "1_analysts" / "sentiment.md"),
+        "news_report": _read(report_dir / "1_analysts" / "news.md"),
+        "fundamentals_report": _read(report_dir / "1_analysts" / "fundamentals.md"),
+        "investment_plan": _read(report_dir / "2_research" / "manager.md"),
+        "trader_investment_plan": _read(report_dir / "3_trading" / "trader.md"),
+        "final_trade_decision": _read(report_dir / "5_portfolio" / "decision.md"),
+        "investment_debate_state": {
+            "bull_history": _read(report_dir / "2_research" / "bull.md"),
+            "bear_history": _read(report_dir / "2_research" / "bear.md"),
+        },
+        "risk_debate_state": {
+            "aggressive_history": _read(report_dir / "4_risk" / "aggressive.md"),
+            "conservative_history": _read(report_dir / "4_risk" / "conservative.md"),
+            "neutral_history": _read(report_dir / "4_risk" / "neutral.md"),
+        },
+    }
+    return ticker, state
+
+
+def settings_from_report_header(complete: str) -> dict:
+    """Recover the run details the header already records, for a rebuilt page."""
+    settings: dict = {}
+    match = re.search(r"^-\s+TradingAgents\s+([\d.]+):\s*(.+)$", complete, re.MULTILINE)
+    if match:
+        settings["version"] = match.group(1)
+        models = match.group(2)
+        provider = models.split(",")[0].strip()
+        deep = re.search(r"\bdeep\s+([^,]+)", models)
+        quick = re.search(r"\bquick\s+([^,]+)", models)
+        settings["llm_provider"] = provider
+        if deep:
+            settings["deep_think_llm"] = deep.group(1).strip()
+        if quick:
+            settings["quick_think_llm"] = quick.group(1).strip()
+    match = re.search(
+        r"^-\s+Analysts:\s*(.+?);\s*research debate rounds\s*(\d+),\s*risk debate rounds\s*(\d+)",
+        complete, re.MULTILINE,
+    )
+    if match:
+        settings["analysts"] = [part.strip() for part in match.group(1).split(",")]
+        settings["max_debate_rounds"] = int(match.group(2))
+        settings["max_risk_discuss_rounds"] = int(match.group(3))
+    match = re.search(r"^-\s+Data vendors:\s*(.+)$", complete, re.MULTILINE)
+    if match:
+        vendors, last_key = {}, None
+        for part in match.group(1).split(", "):
+            bits = part.strip().split(" ", 1)
+            if len(bits) == 2:
+                vendors[bits[0]] = bits[1]
+                last_key = bits[0]
+            elif last_key:  # a chain such as "sec_edgar,yfinance"
+                vendors[last_key] += "," + part.strip()
+        settings["data_vendors"] = vendors
+    return settings
+
+
+def rebuild_html(report_dir, settings: dict | None = None) -> Path:
+    """Re-render ``complete_report.html`` from a saved report tree, no LLM calls."""
+    from tradingagents.report_html import render_report
+    from tradingagents.report_visuals import build_chart_data_for_report
+
+    report_dir = Path(report_dir)
+    ticker, state = state_from_report_tree(report_dir)
+    if settings is None:
+        settings = settings_from_report_header(_read(report_dir / "complete_report.md"))
+    parts = _report_parts(state)
+    chart_data = build_chart_data_for_report(ticker, state)
+    page = render_report(ticker, state, settings, parts, chart_data=chart_data)
+    target = report_dir / "complete_report.html"
+    target.write_text(page, encoding="utf-8")
+    return target

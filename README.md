@@ -224,7 +224,15 @@ Each flag skips only its own question. Run without a terminal, a missing answer 
 
 At start-up the interactive CLI mentions a newer release and notices from Tauric Research. It checks at most once a day, in the background, and sends nothing about your runs; set `TRADINGAGENTS_NO_UPDATE_CHECK=1` to turn it off. Runs without a terminal never check.
 
-A saved report also includes `complete_report.html`, the report as one page with its sections listed beside the text, for reading in a browser, on a phone or in print. Answering the save question at the prompt also asks about the page and can open it in your browser; `--no-html` skips it, and so does `ta.save_reports(state, "NVDA", html=False)` from Python.
+A saved report also includes `complete_report.html`, the report as one page with its sections listed beside the text, for reading in a browser, on a phone or in print. The page leads with a visual dashboard — rating, key numbers, the price chart with the report's own levels, the RSI gauge, scenario odds, the trade plan and the 52-week range — and each analyst section opens with its own charts and cards. The full prose stays one click away in a collapsed disclosure, so the report is quick to skim without losing the reasoning. Answering the save question at the prompt also asks about the page and can open it in your browser; `--no-html` skips it, and so does `ta.save_reports(state, "NVDA", html=False)` from Python.
+
+An existing report tree can be re-rendered after an upgrade without paying for another LLM run:
+
+```bash
+tradingagents rebuild-report ~/.tradingagents/logs/reports/NVDA_20260923_101500
+```
+
+It reads the saved markdown, rebuilds `complete_report.html` with the current visual layout, and leaves the markdown untouched.
 
 ### Markets and tickers
 

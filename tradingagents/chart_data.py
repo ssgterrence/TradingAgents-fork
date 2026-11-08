@@ -111,8 +111,9 @@ def build_chart_data(ticker: str, trade_date: str, *, months: int = 7,
     rsi_last = float(window["rsi"].iloc[-1])
     atr_last = float(window["atr"].iloc[-1])
     year = pd.DataFrame(stats[stats["Date"] >= pd.Timestamp(trade_date) - pd.DateOffset(years=1)])
-    high_52w = float(year["high"].max())
-    drawdown = (last - high_52w) / high_52w * 100
+    high_52w = float(year["high"].max()) if not year.empty else float(stats["high"].max())
+    low_52w = float(year["low"].min()) if not year.empty else float(stats["low"].min())
+    drawdown = (last - high_52w) / high_52w * 100 if high_52w else 0.0
     sma50 = float(window["close_50_sma"].iloc[-1])
     sma200 = float(window["close_200_sma"].iloc[-1])
     gap = sma50 - sma200
@@ -144,6 +145,7 @@ def build_chart_data(ticker: str, trade_date: str, *, months: int = 7,
                  "histogram": _round(window["macdh"])},
         "distances": references,
         "gauge": {"value": round(rsi_last, 1), "label": f"RSI · {rsi_label}"},
+        "range": {"low": round(low_52w, 2), "high": round(high_52w, 2), "last": round(last, 2)},
         "scenarios": scenarios or [],
         "stats": [
             {"label": "Last close", "value": _fmt(last), "note": dates[-1], "tone": ""},

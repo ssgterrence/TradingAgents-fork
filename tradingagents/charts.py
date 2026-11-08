@@ -20,6 +20,11 @@ __all__ = [
     "level_ladder",
     "diverging_bars",
     "prob_bars",
+    "bar_chart",
+    "line_chart",
+    "range_bar",
+    "trade_plan",
+    "stacked_bar",
 ]
 
 
@@ -121,7 +126,7 @@ def price_chart(dates: list[str], close: list[float], *, high=None, low=None,
     n = len(close)
     if n < 2:
         return ""
-    left, right = 52, 106
+    left, right = 52, 122
     top = 30 if overlays else 16
     bottom = 24
     vol_h = 58 if volume else 0
@@ -164,7 +169,8 @@ def price_chart(dates: list[str], close: list[float], *, high=None, low=None,
     for price, name, kind in levels:
         if not lo <= price <= hi:
             continue
-        cls = "c-level-support" if kind == "support" else "c-level-resistance"
+        cls = {"support": "c-level-support", "target": "c-level-support",
+               "stop": "c-level-resistance"}.get(kind, "c-level")
         parts.append(_line(left, y(price), plot_right, y(price), cls=cls))
         label_items.append((y(price), f"{_num(price)}  {name}"))
     label_items.append((y(close[-1]), f"{_num(close[-1])}  last"))
@@ -374,15 +380,18 @@ def level_ladder(levels, last: float, *, width: int = 460, title: str = "Key lev
                            size=10, weight=600 if current else 400,
                            tone="--ink" if current else None))
         dot_cls = {"support": "c-dot-support", "resistance": "c-dot-resistance",
-                   "last": "c-dot"}[kind]
+                   "last": "c-dot", "entry": "c-dot",
+                   "stop": "c-dot-resistance", "target": "c-dot-support"}.get(kind, "c-dot")
         parts.append(f'<circle cx="{x(price):.1f}" cy="{cy:.1f}" r="{3.6 if current else 2.8}" '
                      f'class="{dot_cls}"/>')
         if current:
             parts.append(_text(axis_right + 12, cy + 3.5, "—", size=10, weight=600))
             continue
         parts.append(_text(axis_right + 12, cy + 3.5, name, size=9.5))
+        tone = {"support": "--up", "target": "--up",
+                "resistance": "--down", "stop": "--down"}.get(kind, "--muted")
         parts.append(_text(width - 2, cy + 3.5, _distance(price, last), anchor="end", size=9.5,
-                           tone="--up" if kind == "support" else "--down"))
+                           tone=tone))
     return _svg(width, height, "".join(parts), title,
                 f"Key price levels around the last close of {last:.2f}.")
 
@@ -441,6 +450,279 @@ def prob_bars(items, *, width: int = 460, title: str = "Scenarios") -> str:
                            weight=600))
     return _svg(width, height, "".join(parts), title,
                 "How the report's own scenarios split the odds.")
+
+
+def _clean(values):
+    """The finite numbers in a series, for domain and extent work."""
+    out = []
+    for value in values or []:
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not math.isnan(number) and not math.isinf(number):
+            out.append(number)
+    return out
+
+
+def _short(label: str, limit: int = 12) -> str:
+    text = str(label)
+    return text if len(text) <= limit else text[: limit - 1] + "\u2026"
+
+
+def bar_chart(labels, values, *, width: int = 460, height: int = 190,
+              title: str = "Bars", unit: str = "", tone: str = "--accent",
+              tones=None, value_fmt=None, baseline_zero: bool = True) -> str:
+    """Vertical bars for one series: revenue, EPS, margins, insider sales.
+
+    ``tones`` can name a colour per bar (``"--up"`` / ``"--down"``); the default
+    is ``tone``. Values are labelled above positive bars and below negative ones.
+    """
+    values = list(values or [])
+    labels = list(labels or [])
+    pairs = [(label, value) for label, value in zip(labels, values, strict=False)
+             if value is not None and _clean([value])]
+    if len(pairs) < 2:
+        return ""
+    labels = [str(label) for label, _ in pairs]
+    values = [float(value) for _, value in pairs]
+    fmt = value_fmt or (lambda value: _num(value))
+    tones = list(tones or [])
+
+    left, right, top, bottom = 42, 12, 18, 30
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+    lo, hi = min(values), max(values)
+    if baseline_zero:
+        lo, hi = min(0.0, lo), max(0.0, hi)
+    if hi == lo:
+        hi = lo + 1
+    pad = (hi - lo) * 0.12
+    if baseline_zero:
+        lo = min(0.0, lo)
+        if lo < 0:
+            lo -= pad
+        if hi > 0:
+            hi += pad
+    else:
+        lo -= pad
+        hi += pad
+
+    def y(value):
+        return top + (hi - value) / (hi - lo) * plot_h
+
+    parts = []
+    for tick in _ticks(lo, hi, 4):
+        parts.append(_line(left, y(tick), width - right, y(tick), cls="c-grid"))
+        parts.append(_text(left - 7, y(tick) + 3.5, _num(tick, 1), anchor="end", size=8.5))
+    if lo <= 0 <= hi:
+        parts.append(_line(left, y(0), width - right, y(0), cls="c-level"))
+
+    step = plot_w / len(values)
+    bar_w = max(3.0, min(34.0, step * 0.62))
+    base = 0.0 if baseline_zero else lo
+    for i, (label, value) in enumerate(zip(labels, values, strict=False)):
+        cx = left + step * (i + 0.5)
+        x0 = cx - bar_w / 2
+        y0, y1 = y(base), y(value)
+        colour = tones[i] if i < len(tones) and tones[i] else (
+            "--down" if value < 0 else ("--up" if baseline_zero else tone))
+        parts.append(f'<rect x="{x0:.1f}" y="{min(y0, y1):.1f}" width="{bar_w:.1f}" '
+                     f'height="{max(1.2, abs(y1 - y0)):.1f}" rx="2" fill="var({colour})" '
+                     f'opacity="0.82"/>')
+        label_y = min(y0, y1) - 5 if value >= 0 else max(y0, y1) + 11
+        parts.append(_text(cx, label_y, fmt(value), anchor="middle", size=8.5,
+                           weight=600, tone="--ink"))
+        if len(labels) <= 8 or i % 2 == 0 or i == len(labels) - 1:
+            parts.append(_text(cx, height - 9, _short(label), anchor="middle", size=8.5,
+                               tone="--muted"))
+
+    desc = f"{title}: {len(values)} bars" + (f", in {unit}." if unit else ".")
+    return _svg(width, height, "".join(parts), title, desc)
+
+
+def line_chart(labels, series, *, width: int = 460, height: int = 190,
+               title: str = "Lines", unit: str = "", value_fmt=None) -> str:
+    """One or more line series over the same labels, with a legend.
+
+    ``series`` is ``[(name, values, tone, dash)]``; ``dash`` may be empty.
+    """
+    labels = list(labels or [])
+    clean_series = []
+    for name, values, tone, dash in series or []:
+        points = _clean(values)
+        if len(points) >= 2:
+            clean_series.append((name, list(values), tone, dash or "1 0"))
+    if len(labels) < 2 or not clean_series:
+        return ""
+    fmt = value_fmt or (lambda value: _num(value))
+    all_values = [value for _name, values, _tone, _dash in clean_series for value in _clean(values)]
+    lo, hi = min(all_values), max(all_values)
+    if hi == lo:
+        hi = lo + 1
+    pad = (hi - lo) * 0.12
+    lo -= pad
+    hi += pad
+
+    left, right, top, bottom = 42, 54, 26, 30
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+    n = len(labels)
+
+    def x(index):
+        return left + index * plot_w / (n - 1)
+
+    def y(value):
+        return top + (hi - value) / (hi - lo) * plot_h
+
+    parts = []
+    for tick in _ticks(lo, hi, 4):
+        parts.append(_line(left, y(tick), width - right, y(tick), cls="c-grid"))
+        parts.append(_text(left - 7, y(tick) + 3.5, _num(tick, 1), anchor="end", size=8.5))
+    for i in sorted({0, n // 4, n // 2, 3 * n // 4, n - 1}):
+        parts.append(_text(x(i), height - 9, _short(labels[i]), anchor="middle", size=8.5,
+                           tone="--muted"))
+
+    cursor = left
+    for name, values, tone, dash in clean_series:
+        points = [(x(i), y(float(value))) for i, value in enumerate(values)
+                  if value is not None and _clean([value])]
+        parts.append(_polyline(points, cls="c-overlay", width=1.5,
+                               extra=f' stroke="var({tone})" stroke-dasharray="{dash}"'))
+        last = next((float(v) for v in reversed(values) if v is not None and _clean([v])), None)
+        if last is not None:
+            parts.append(f'<circle cx="{x(n - 1):.1f}" cy="{y(last):.1f}" r="2.2" '
+                         f'fill="var({tone})"/>')
+            parts.append(_text(width - 2, y(last) + 3.5, fmt(last), anchor="end", size=8.5,
+                               weight=600, tone=tone))
+        parts.append(_line(cursor, 10, cursor + 14, 10, cls="c-overlay",
+                           extra=f' stroke="var({tone})" stroke-dasharray="{dash}"'))
+        parts.append(_text(cursor + 18, 13, _short(name, 18), size=8.5, tone="--muted"))
+        cursor += 24 + len(_short(name, 18)) * 4.6
+
+    desc = f"{title}: {len(clean_series)} series" + (f", in {unit}." if unit else ".")
+    return _svg(width, height, "".join(parts), title, desc)
+
+
+def range_bar(low: float, high: float, current: float, *, markers=(),
+              width: int = 460, height: int = 92, title: str = "Range",
+              unit: str = "", value_fmt=None) -> str:
+    """A horizontal range with the current value and optional markers."""
+    low, high, current = float(low), float(high), float(current)
+    if not (high > low):
+        return ""
+    current = max(low, min(high, current))
+    fmt = value_fmt or (lambda value: _num(value))
+    left, right, top, bottom = 18, 18, 34, 30
+    plot_w = width - left - right
+    axis_y = height - bottom
+
+    def x(value):
+        return left + (float(value) - low) / (high - low) * plot_w
+
+    parts = [_line(left, axis_y, width - right, axis_y, cls="c-level")]
+    parts.append(f'<circle cx="{x(current):.1f}" cy="{axis_y}" r="4" class="c-dot"/>')
+    parts.append(_text(x(current), axis_y - 10, fmt(current), anchor="middle", size=9,
+                       weight=600, tone="--ink"))
+    parts.append(_text(left, axis_y + 15, fmt(low), size=8.5, tone="--muted"))
+    parts.append(_text(width - right, axis_y + 15, fmt(high), anchor="end", size=8.5,
+                       tone="--muted"))
+    for value, label, tone in markers or []:
+        if value is None or not (low <= float(value) <= high):
+            continue
+        mx = x(value)
+        parts.append(_line(mx, axis_y - 7, mx, axis_y + 7, cls="c-level",
+                           extra=f' stroke="var({tone or "--muted"})"'))
+        parts.append(_text(mx, top - 6, _short(label, 14), anchor="middle", size=8.5,
+                           tone=tone or "--muted"))
+    desc = f"{title}: {fmt(low)} to {fmt(high)}, current {fmt(current)}"
+    if unit:
+        desc += f" ({unit})"
+    return _svg(width, height, "".join(parts), title, desc + ".")
+
+
+def trade_plan(entry: float, stop: float, targets=(), *, last: float | None = None,
+               width: int = 640, height: int = 132, title: str = "Trade plan") -> str:
+    """Entry, stop and targets on one price axis, with risk and reward shaded."""
+    entry, stop = float(entry), float(stop)
+    targets = [float(value) for value in targets or [] if value is not None]
+    values = [entry, stop, *targets]
+    if last is not None:
+        values.append(float(last))
+    if len(values) < 2 or max(values) == min(values):
+        return ""
+    low, high = min(values), max(values)
+    pad = (high - low) * 0.08
+    low, high = low - pad, high + pad
+    left, right, top, bottom = 20, 20, 34, 30
+    plot_w = width - left - right
+    axis_y = height - bottom
+
+    def x(value):
+        return left + (float(value) - low) / (high - low) * plot_w
+
+    parts = [_line(left, axis_y, width - right, axis_y, cls="c-level")]
+    # Risk is the distance from entry down to the stop; reward is entry to the
+    # furthest target. Washes sit under the axis so the labels stay readable.
+    risk_x0, risk_x1 = sorted((x(entry), x(stop)))
+    parts.append(f'<rect x="{risk_x0:.1f}" y="{top - 4:.1f}" width="{risk_x1 - risk_x0:.1f}" '
+                 f'height="{axis_y - top + 4:.1f}" class="c-zone-down"/>')
+    if targets:
+        reward_x0, reward_x1 = sorted((x(entry), x(max(targets))))
+        parts.append(f'<rect x="{reward_x0:.1f}" y="{top - 4:.1f}" '
+                     f'width="{reward_x1 - reward_x0:.1f}" height="{axis_y - top + 4:.1f}" '
+                     f'class="c-zone-up"/>')
+    markers = [(stop, "Stop", "--down"), (entry, "Entry", "--ink")]
+    markers += [(value, f"Target {i}", "--up") for i, value in enumerate(targets, 1)]
+    if last is not None:
+        markers.append((float(last), "Last", "--muted"))
+    for index, (value, label, tone) in enumerate(markers):
+        mx = x(value)
+        above = index % 2 == 0
+        label_y = top - 8 if above else axis_y + 18
+        parts.append(_line(mx, axis_y - 9, mx, axis_y + 9, cls="c-level",
+                           extra=f' stroke="var({tone})" stroke-width="1.4"'))
+        parts.append(f'<circle cx="{mx:.1f}" cy="{axis_y}" r="3" fill="var({tone})"/>')
+        parts.append(_text(mx, label_y, f"{label} {_num(value)}", anchor="middle", size=8.5,
+                           weight=600, tone=tone,
+                           extra=' paint-order="stroke" stroke="var(--paper)" stroke-width="3"'))
+    desc = f"Entry {_num(entry)}, stop {_num(stop)}"
+    if targets:
+        desc += ", targets " + ", ".join(_num(value) for value in targets)
+    return _svg(width, height, "".join(parts), title, desc + ".")
+
+
+def stacked_bar(items, *, width: int = 460, height: int = 78,
+                title: str = "Composition") -> str:
+    """One horizontal bar split into parts: ``(label, value, tone)``."""
+    items = [(str(label), float(value), tone) for label, value, tone in items or []
+             if value is not None and float(value) > 0]
+    total = sum(value for _label, value, _tone in items)
+    if total <= 0:
+        return ""
+    left, right, top = 14, 14, 22
+    bar_h = 20
+    plot_w = width - left - right
+    parts = []
+    cursor = left
+    for _label, value, tone in items:
+        segment = plot_w * value / total
+        parts.append(f'<rect x="{cursor:.1f}" y="{top}" width="{max(1.0, segment):.1f}" '
+                     f'height="{bar_h}" fill="var({tone})" opacity="0.82"/>')
+        if segment > 34:
+            parts.append(_text(cursor + segment / 2, top + 14, f"{value / total * 100:.0f}%",
+                               anchor="middle", size=8.5, weight=600, tone="--paper"))
+        cursor += segment
+    cursor = left
+    for label, _value, tone in items:
+        parts.append(f'<circle cx="{cursor + 3}" cy="{top + bar_h + 17}" r="3" fill="var({tone})"/>')
+        parts.append(_text(cursor + 10, top + bar_h + 20, _short(label, 16), size=8.5,
+                           tone="--muted"))
+        cursor += 26 + len(_short(label, 16)) * 4.6
+    return _svg(width, height, "".join(parts), title,
+                "A single bar split by " + ", ".join(label for label, _v, _t in items) + ".")
 
 
 # --------------------------------------------------------------------------- #

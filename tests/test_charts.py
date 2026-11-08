@@ -77,3 +77,41 @@ def test_no_negative_dimensions_escape():
     svg = _price(volume=None)
     assert not re.search(r'height="-\d', svg)
     assert not re.search(r'width="-\d', svg)
+
+
+@pytest.mark.unit
+def test_the_new_chart_primitives_are_inline_svg():
+    svgs = [
+        charts.bar_chart(["Q1", "Q2", "Q3"], [1.0, 2.0, 3.0], title="Revenue"),
+        charts.line_chart(["Q1", "Q2", "Q3"],
+                          [("Gross", [60.0, 61.0, 62.0], "--accent", "1 0")],
+                          title="Margins"),
+        charts.range_bar(100, 200, 150, markers=[(120, "stop", "--down")],
+                         title="52-week range"),
+        charts.trade_plan(150, 120, [200], last=160, title="Trade plan"),
+        charts.stacked_bar([("Bull", 3, "--up"), ("Bear", 2, "--down")],
+                           title="News flow"),
+    ]
+    for svg in svgs:
+        assert svg.startswith("<svg") and svg.endswith("</svg>")
+        assert 'role="img"' in svg and "<title>" in svg
+        assert "<script" not in svg.lower() and "<img" not in svg.lower()
+        assert "href=" not in svg.lower()
+
+
+@pytest.mark.unit
+def test_the_new_charts_tolerate_missing_values_and_empty_input():
+    assert charts.bar_chart([], []) == ""
+    assert charts.line_chart([], []) == ""
+    assert charts.range_bar(100, 100, 100) == ""
+    assert charts.trade_plan(100, 100) == ""
+    assert charts.stacked_bar([]) == ""
+    svg = charts.bar_chart(["Q1", "Q2"], [None, 3.0], title="Revenue")
+    assert svg == "" or ("nan" not in svg.lower() and "none" not in svg.lower())
+
+
+@pytest.mark.unit
+def test_the_trade_plan_names_entry_stop_and_target():
+    svg = charts.trade_plan(150, 120, [200], last=160, title="Trade plan")
+    for label in ("Entry 150.00", "Stop 120.00", "Target 1 200.00"):
+        assert label in svg

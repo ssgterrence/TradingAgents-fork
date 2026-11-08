@@ -17,6 +17,9 @@ SETTINGS = {"version": "1.2.3", "llm_provider": "openai", "deep_think_llm": "gpt
 
 def _state(**overrides):
     state = {"trade_date": "2026-09-26",
+             # An explicit empty payload keeps the unit tests offline; the
+             # chart_data test below overrides it.
+             "chart_data": {},
              "market_report": "# Market view\n\nPrice | Level\n--- | ---\nClose | 181.2\n",
              "news_report": "News text.",
              "final_trade_decision": "**Rating**: Overweight\n\nAdd on weakness."}
@@ -211,3 +214,85 @@ def test_the_page_still_renders_without_chart_data(tmp_path):
     assert 'id="overview"' not in page
     assert "<svg" in page  # the logo is still drawn in the page
     assert "At a glance" not in page
+
+
+@pytest.mark.unit
+def test_the_visual_summary_leads_and_the_full_prose_is_collapsed(tmp_path):
+    page = _html(tmp_path, chart_data=CHART_DATA)
+    assert 'class="visual-summary"' in page
+    assert '<details class="full-text"' in page
+    assert "At a glance" in page
+    # The original prose is still in the page, inside the details element.
+    assert "Market view" in page
+    # Every agent gets a disclosure, not just the first one.
+    assert page.count('<details class="full-text"') >= 2
+
+
+@pytest.mark.unit
+def test_a_chart_failure_never_stops_the_report(tmp_path, monkeypatch):
+    import tradingagents.report_visuals as visuals
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("vendor down")
+
+    monkeypatch.setattr(visuals, "build_chart_data_for_report", boom)
+    state = _state()
+    state.pop("chart_data")
+    write_report_tree(state, "NVDA", tmp_path, settings=SETTINGS, html=True)
+    page = (tmp_path / "complete_report.html").read_text(encoding="utf-8")
+    assert "NVDA" in page and "Market view" in page
+    assert 'id="overview"' not in page
+
+
+@pytest.mark.unit
+def test_rebuild_html_from_a_saved_tree(tmp_path):
+    from tradingagents.reporting import rebuild_html
+
+    (tmp_path / "1_analysts").mkdir()
+    (tmp_path / "1_analysts" / "market.md").write_text("# Market view\n\nClose 181.2.\n",
+                                                       encoding="utf-8")
+    (tmp_path / "5_portfolio").mkdir()
+    (tmp_path / "5_portfolio" / "decision.md").write_text(
+        "**Rating**: Overweight\n\n**Executive Summary**: Add on weakness.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "complete_report.md").write_text(
+        "# Trading Analysis Report: NVDA\n\n- Analysis date: 2026-09-26\n", encoding="utf-8"
+    )
+    target = rebuild_html(tmp_path)
+    page = target.read_text(encoding="utf-8")
+    assert "NVDA" in page and "Overweight" in page and "Market view" in page
+
+
+@pytest.mark.unit
+def test_chinese_tables_are_read_for_the_macro_strip():
+    from tradingagents.report_visuals import extract_macro_kpis
+
+    text = (
+        "| 类别 | 指标 / 事件 | 最新值 | 变动 | 对 ANET 的含义 | 方向 |\n"
+        "|---|---|---|---|---|---|\n"
+        "| 利率 | 10Y 美债 | 4.95% | +30bp | 估值压缩 | 利空 |\n"
+        "| 通胀 | CPI | 336.3 | 加速 | 阻断降息 | 利空 |\n"
+    )
+    labels = [item["label"] for item in extract_macro_kpis(text)]
+    assert "10Y UST" in labels and "CPI" in labels
+
+
+@pytest.mark.unit
+def test_rebuild_recovers_the_run_details_from_the_saved_header():
+    from tradingagents.reporting import settings_from_report_header
+
+    header = (
+        "- TradingAgents 0.7.0: openai_compatible, deep mimo-v2.6-pro, "
+        "quick deepseek-v4.1-flash\n"
+        "- Analysts: market, news, fundamentals; research debate rounds 2, "
+        "risk debate rounds 1\n"
+        "- Data vendors: core_stock_apis yfinance, fundamental_data sec_edgar,yfinance\n"
+    )
+    settings = settings_from_report_header(header)
+    assert settings["version"] == "0.7.0"
+    assert settings["llm_provider"] == "openai_compatible"
+    assert settings["deep_think_llm"] == "mimo-v2.6-pro"
+    assert settings["quick_think_llm"] == "deepseek-v4.1-flash"
+    assert settings["analysts"] == ["market", "news", "fundamentals"]
+    assert settings["data_vendors"]["fundamental_data"] == "sec_edgar,yfinance"
