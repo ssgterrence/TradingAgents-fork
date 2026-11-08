@@ -23,3 +23,12 @@ def test_news_prompt_matches_get_news_signature():
     src = inspect.getsource(na)
     assert "get_news(start_date, end_date)" in src
     assert "get_news(query" not in src
+
+
+@pytest.mark.unit
+def test_the_news_analyst_can_verify_a_price_move():
+    # Headlines and social posts quote moves; without a price tool the analyst
+    # has to call the instrument's price data unavailable.
+    from tradingagents.agents.tools import get_verified_market_snapshot
+
+    assert get_verified_market_snapshot in na.TOOLS

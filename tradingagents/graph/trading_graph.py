@@ -10,6 +10,7 @@ from typing import Any
 import tradingagents
 from tradingagents.agents.context import build_instrument_context, resolve_instrument_identity
 from tradingagents.agents.rating import run_rating
+from tradingagents.dataflows import quality
 from tradingagents.dataflows.config import run_config, run_config_context, set_config
 from tradingagents.dataflows.date_window import get_current_date, is_historical
 from tradingagents.dataflows.symbols import safe_ticker_component
@@ -381,6 +382,9 @@ class TradingAgentsGraph:
     def _run_graph(self, company_name, trade_date, asset_type: str = "stock",
                    checkpoint_thread_id: str | None = None, portfolio=None):
         """Execute the graph and write the resulting state to disk and memory log."""
+        # Start the data-quality note from this run only; analysts run in
+        # parallel threads and append to the ledger as their tools answer.
+        quality.reset()
         init_agent_state = self.create_run_state(company_name, trade_date, asset_type, portfolio)
         args = self.propagator.get_graph_args()
 
@@ -404,6 +408,10 @@ class TradingAgentsGraph:
                     final_state.update(state)
         else:
             final_state = self.graph.invoke(graph_input, **args)
+
+        # Carry the vendor failures into the saved report; the writer only shows
+        # them when a call actually failed or needed a fallback.
+        final_state["data_quality"] = quality.snapshot()
 
         self.record_decision(company_name, trade_date, final_state)
 

@@ -1,5 +1,6 @@
 import logging
 
+from tradingagents.dataflows import quality
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.errors import (
     NoMarketDataError,
@@ -40,6 +41,11 @@ from tradingagents.dataflows.vendors.yahoo.market import (
 from tradingagents.dataflows.vendors.yahoo.news import get_global_news_yfinance, get_news_yfinance
 
 logger = logging.getLogger(__name__)
+
+# A category served by one vendor has no fallback: that vendor's outage takes the
+# whole category down, which is exactly how a run loses company news without
+# saying so. Warn once per method so the fix (a second vendor) is visible.
+_warned_single_vendor: set[str] = set()
 
 # Tools organized by category
 TOOLS_CATEGORIES = {
@@ -240,11 +246,27 @@ def route_to_vendor(method: str, *args, **kwargs):
     else:
         vendor_chain = all_available_vendors
 
+    if len(vendor_chain) == 1 and category not in OPTIONAL_CATEGORIES:
+        key = f"{category}:{method}"
+        if key not in _warned_single_vendor:
+            _warned_single_vendor.add(key)
+            logger.warning(
+                "Only one vendor (%s) serves %s; a failure there takes the whole "
+                "category down. List a fallback in data_vendors for resilience.",
+                vendor_chain[0], method,
+            )
+
     last_no_data: NoMarketDataError | None = None
     last_unavailable: VendorUnavailableError | None = None
     failed: Exception | None = None     # a vendor that raised something untyped
     first_error: Exception | None = None
     unavailable: list[tuple[str, str]] = []   # (vendor, error class) for a later note
+    chain_failures: list[tuple[str, str]] = []  # every vendor that could not serve it
+
+    def _record(status: str, served_by: str | None = None) -> None:
+        quality.record(method, category, status, vendor_chain,
+                       served_by=served_by, failures=chain_failures)
+
     for vendor in vendor_chain:
         vendor_impl = VENDOR_METHODS[method][vendor]
         impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
@@ -257,6 +279,7 @@ def route_to_vendor(method: str, *args, **kwargs):
             # problem, rather than reporting nothing about the symbol.
             last_unavailable = e
             unavailable.append((vendor, type(e).__name__))
+            chain_failures.append((vendor, type(e).__name__))
             continue
         except VendorNotConfiguredError as e:
             logger.warning("Vendor %r not configured for %s; trying next vendor.", vendor, method)
@@ -265,6 +288,7 @@ def route_to_vendor(method: str, *args, **kwargs):
             continue
         except NoMarketDataError as e:
             last_no_data = e  # No data here; another configured vendor may have it
+            chain_failures.append((vendor, type(e).__name__))
             continue
         except Exception as e:
             # Don't let one vendor's failure crash the call when another can
@@ -274,14 +298,25 @@ def route_to_vendor(method: str, *args, **kwargs):
             if first_error is None:
                 first_error = e
             failed = e
+            chain_failures.append((vendor, type(e).__name__))
             continue
         else:
+            text = value.lstrip() if isinstance(value, str) else ""
+            degraded = _is_fallback_notice(value) or text.startswith(
+                ("DATA_UNAVAILABLE", "NO_DATA_AVAILABLE")
+            )
+            # A vendor that recovered internally still used a weaker source;
+            # name it so the report does not read as a clean primary fetch.
+            if not chain_failures and "the quote feed did not serve these articles" in text:
+                chain_failures.append((vendor, "search fallback"))
             if unavailable and _is_fallback_notice(value):
                 failed_vendor, error_class = unavailable[0]
                 value = (
                     f"{value.rstrip()}\n\nNote: {failed_vendor} was unavailable for "
                     f"this call ({error_class}); the notice above is from {vendor}."
                 )
+            _record("failed" if degraded else ("fallback" if chain_failures else "ok"),
+                    served_by=vendor)
             return value
 
     # A vendor that throttled or failed the request never said whether it has
@@ -289,8 +324,10 @@ def route_to_vendor(method: str, *args, **kwargs):
     # report the vendors as the problem, not the instrument. It must not end
     # the run either.
     if last_unavailable is not None:
+        _record("failed")
         return vendor_unavailable(method, last_unavailable)
     if failed is not None and last_no_data is not None:
+        _record("failed")
         return vendor_unavailable(method, failed)
 
     # Every vendor that answered reported "no data": the symbol is genuinely unavailable.
@@ -305,6 +342,7 @@ def route_to_vendor(method: str, *args, **kwargs):
                 "Returning NO_DATA for %s, but a vendor errored earlier: %s",
                 method, first_error,
             )
+        _record("failed")
         return no_data_available(last_no_data)
 
     # No vendor returned data and none reported clean "no data" — surface the
@@ -314,10 +352,13 @@ def route_to_vendor(method: str, *args, **kwargs):
     if first_error is not None:
         if category in OPTIONAL_CATEGORIES:
             logger.warning("Optional %s unavailable for %s: %s", category, method, first_error)
+            _record("failed")
             return (
                 f"DATA_UNAVAILABLE: optional {category} could not be retrieved "
                 f"({first_error}). Proceed without it; do not fabricate values."
             )
+        _record("failed")
         raise first_error
 
+    _record("failed")
     raise RuntimeError(f"No available vendor for '{method}'")

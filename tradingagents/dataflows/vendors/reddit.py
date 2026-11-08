@@ -1,26 +1,36 @@
 """Reddit search fetcher for ticker-specific discussion posts.
 
-Reads Reddit's public Atom/RSS search feed, searching all subreddits in one
-combined request. The JSON search endpoint is WAF-blocked (``HTTP 403``) for
-anonymous clients (#862), so RSS is the only path; it carries no score or comment
-counts. On a 429 we back off once, honouring ``Retry-After``.
+Two paths, best first:
+
+1. **OAuth (app-only)** when ``REDDIT_CLIENT_ID`` and ``REDDIT_CLIENT_SECRET``
+   are set. Reddit's JSON search carries ``score`` and ``num_comments``, so the
+   sentiment analyst can weigh a post by engagement as well as by text.
+2. **Public Atom/RSS** otherwise (or if OAuth fails). The anonymous JSON search
+   endpoint is WAF-blocked (``HTTP 403``) for clients without a token (#862), so
+   RSS is the keyless path; it carries no score or comment counts. On a 429 we
+   back off once, honouring ``Retry-After``.
 
 A fetch that fails is reported as ``<unavailable>``, never as "no posts found":
 the two are different claims, and passing a rate-limited fetch off as silence
 hands the sentiment analyst a signal that was never observed (#1295).
 
-No API key required. Returns formatted plaintext blocks ready for prompt
+Keyless still works. Returns formatted plaintext blocks ready for prompt
 injection and degrades gracefully — returns a placeholder string rather than
 raising, so callers never special-case missing data.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import html
 import http.client
+import json
 import logging
+import os
 import random
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
@@ -66,11 +76,18 @@ def _coverage_dates(posts) -> list:
 
 
 _RSS = "https://www.reddit.com/r/{sub}/search.rss?{qs}"
+_OAUTH_SEARCH = "https://oauth.reddit.com/r/{sub}/search"
+_TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
 # A descriptive, identified User-Agent (per Reddit's API etiquette). Reddit
 # blocks generic/anonymous tokens like bare "Mozilla/5.0" or "curl/…" but
 # serves this one on both endpoints; the RSS feed accepts it even when the
 # JSON search endpoint 403s, so no browser-spoofing is needed.
 _UA = "tradingagents/0.2 (+https://github.com/TauricResearch/TradingAgents)"
+
+# App-only tokens last an hour; cache one per credential pair so a run pays for
+# the token once instead of on every subreddit request.
+_TOKEN_LOCK = threading.Lock()
+_token_cache: dict[str, tuple[str, float, str]] = {}
 _ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 
 # Default subreddits ordered roughly by signal density for ticker-specific
@@ -245,6 +262,106 @@ def _fetch_subreddit_rss(
     return posts
 
 
+def _oauth_credentials() -> tuple[str, str, str] | None:
+    """(client_id, client_secret, user_agent), or None when OAuth is not configured."""
+    client_id = os.getenv("REDDIT_CLIENT_ID", "").strip()
+    client_secret = os.getenv("REDDIT_CLIENT_SECRET", "").strip()
+    if not (client_id and client_secret):
+        return None
+    return client_id, client_secret, os.getenv("REDDIT_USER_AGENT", "").strip() or _UA
+
+
+def _reddit_token(timeout: float) -> tuple[str, str] | None:
+    """An app-only bearer token and its User-Agent, or None when the request fails."""
+    credentials = _oauth_credentials()
+    if credentials is None:
+        return None
+    client_id, client_secret, user_agent = credentials
+    secret_digest = hashlib.sha256(client_secret.encode()).hexdigest()[:16]
+    cache_key = f"{client_id}:{secret_digest}:{user_agent}"
+    now = time.time()
+    with _TOKEN_LOCK:
+        cached = _token_cache.get(cache_key)
+        if cached and cached[1] > now + 30:
+            return cached[0], cached[2]
+
+    basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    req = Request(
+        _TOKEN_URL,
+        data=urlencode({"grant_type": "client_credentials"}).encode(),
+        headers={
+            "Authorization": f"Basic {basic}",
+            "User-Agent": user_agent,
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(_read_capped(resp))
+    except (HTTPError, OSError, http.client.HTTPException, ValueError) as exc:
+        logger.warning("Reddit OAuth token request failed: %s", exc)
+        return None
+
+    token = payload.get("access_token")
+    if not token:
+        logger.warning("Reddit OAuth token response carried no access_token")
+        return None
+    expires = now + float(payload.get("expires_in") or 3600)
+    with _TOKEN_LOCK:
+        _token_cache[cache_key] = (token, expires, user_agent)
+    return token, user_agent
+
+
+def _fetch_subreddit_oauth(
+    ticker: str,
+    sub: str,
+    limit: int,
+    timeout: float,
+) -> list[dict] | None:
+    """Reddit's JSON search with score and comment counts, or None on failure.
+
+    Used only when the client credentials are configured. A failure returns
+    None so the caller can fall back to the keyless RSS path rather than losing
+    the source entirely.
+    """
+    token = _reddit_token(timeout)
+    if token is None:
+        return None
+    access_token, user_agent = token
+    qs = urlencode({
+        "q": ticker,
+        "restrict_sr": "1",
+        "sort": "new",
+        "t": "week",
+        "limit": limit,
+        "raw_json": "1",
+    })
+    req = Request(
+        f"{_OAUTH_SEARCH.format(sub=sub)}?{qs}",
+        headers={"Authorization": f"bearer {access_token}", "User-Agent": user_agent},
+    )
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(_read_capped(resp))
+    except (HTTPError, OSError, http.client.HTTPException, ValueError) as exc:
+        logger.warning("Reddit OAuth search failed for r/%s · %s: %s", sub, ticker, exc)
+        return None
+
+    posts = []
+    for child in ((payload.get("data") or {}).get("children") or [])[:limit]:
+        data = child.get("data") or {}
+        posts.append({
+            "title": data.get("title") or "",
+            "created_utc": data.get("created_utc"),
+            "selftext": (data.get("selftext") or "").strip(),
+            "subreddit": data.get("subreddit") or (sub if "+" not in sub else ""),
+            "score": data.get("score"),
+            "num_comments": data.get("num_comments"),
+            "permalink": data.get("permalink") or "",
+        })
+    return posts
+
+
 def fetch_reddit_posts(
     ticker: str,
     subreddits: Iterable[str] | None = None,
@@ -262,7 +379,8 @@ def fetch_reddit_posts(
     All subreddits are searched in one combined feed (``r/a+b+c``): anonymous
     RSS allows about one request per minute per IP, so a request per subreddit
     spent a back-off on almost every run. Each entry names its subreddit, and
-    posts are grouped back by it.
+    posts are grouped back by it. With Reddit OAuth configured, each post also
+    carries its score and comment count; the keyless RSS path has neither.
 
     When ``start_date``/``end_date`` (yyyy-mm-dd) are given, posts are trimmed to
     that window so a historical run does not leak current discussion into a
@@ -277,7 +395,12 @@ def fetch_reddit_posts(
     # ("BTC") so the query actually matches discussion instead of near-nothing.
     ticker = crypto_base(ticker) or ticker
     label = ", ".join(f"r/{s}" for s in subreddits)
-    fetched = _fetch_subreddit_rss(ticker, "+".join(subreddits), _FEED_PAGE, timeout)
+    combined = "+".join(subreddits)
+    # OAuth carries score/comment counts; keyless RSS is the fallback. A failed
+    # token request must not take the source down when RSS still answers.
+    fetched = _fetch_subreddit_oauth(ticker, combined, _FEED_PAGE, timeout)
+    if fetched is None:
+        fetched = _fetch_subreddit_rss(ticker, combined, _FEED_PAGE, timeout)
     if fetched is None:
         return f"<Reddit unavailable: fetch failed ({label}); this is not an absence of discussion>"
 
@@ -329,8 +452,16 @@ def fetch_reddit_posts(
             selftext = (p.get("selftext") or "").replace("\n", " ").strip()
             if len(selftext) > 240:
                 selftext = selftext[:240] + "…"
+            engagement = ""
+            counts = []
+            if p.get("score") is not None:
+                counts.append(f"score {p['score']}")
+            if p.get("num_comments") is not None:
+                counts.append(f"{p['num_comments']} comments")
+            if counts:
+                engagement = " · " + ", ".join(counts)
             lines.append(
-                f"  [{created_str}] {title}"
+                f"  [{created_str}]{engagement} {title}"
                 + (f"\n    body excerpt: {selftext}" if selftext else "")
             )
         blocks.append("\n".join(lines))

@@ -355,3 +355,188 @@ def test_a_figure_under_a_million_is_not_printed_as_zero(monkeypatch):
                         lambda url: TICKER_MAP if "company_tickers" in url else facts)
 
     assert _table(sec_edgar.get_income_statement("AAPL", "annual", "2026-03-01"))[1]["Revenue"] == ["-0.0250", "0.303"]
+
+
+@pytest.mark.unit
+def test_the_income_statement_names_the_nonoperating_and_tax_lines(monkeypatch):
+    """The gap between operating and net income is readable from the filing,
+    instead of being reverse-engineered from an assumed tax rate."""
+    facts = {"facts": {"us-gaap": {
+        "Revenues": {"units": {"USD": [_fact("2026-09-30", 127_577_000_000, "2026-10-29",
+                                             form="10-Q", fp="Q3", start="2026-07-01")]}},
+        "OperatingIncomeLoss": {"units": {"USD": [_fact("2026-09-30", 40_576_000_000, "2026-10-29",
+                                                         form="10-Q", fp="Q3", start="2026-07-01")]}},
+        "NonoperatingIncomeExpense": {"units": {"USD": [_fact("2026-09-30", -8_221_000_000, "2026-10-29",
+                                                              form="10-Q", fp="Q3", start="2026-07-01")]}},
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest":
+            {"units": {"USD": [_fact("2026-09-30", 32_355_000_000, "2026-10-29",
+                                     form="10-Q", fp="Q3", start="2026-07-01")]}},
+        "IncomeTaxExpenseBenefit": {"units": {"USD": [_fact("2026-09-30", 5_887_000_000, "2026-10-29",
+                                                            form="10-Q", fp="Q3", start="2026-07-01")]}},
+        "NetIncomeLoss": {"units": {"USD": [_fact("2026-09-30", 26_468_000_000, "2026-10-29",
+                                                  form="10-Q", fp="Q3", start="2026-07-01")]}},
+    }}}
+    monkeypatch.setattr(sec_edgar, "_fetch_json",
+                        lambda url: TICKER_MAP if "company_tickers" in url else facts)
+
+    columns = _table(sec_edgar.get_income_statement("AAPL", "quarterly", "2026-11-08"))[1]
+
+    assert columns["Nonoperating Income (Expense)"] == ["-8221"]
+    assert columns["Pretax Income"] == ["32355"]
+    assert columns["Income Tax Expense"] == ["5887"]
+
+
+@pytest.mark.unit
+def test_a_derived_ttm_free_cash_flow_is_shown_and_labelled_derived(monkeypatch):
+    """A 10-Q cash flow is filed year to date. The TTM is annual + YTD - prior
+    YTD; it is derived, not a filed line, and the report must say so."""
+    def cf(value, start):
+        return _fact("2026-09-30", value, "2026-10-29", form="10-Q", fp="Q3", start=start)
+
+    facts = {"facts": {"us-gaap": {
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
+            _fact("2025-12-31", 164_713_000_000, "2026-02-05", start="2025-01-01"),
+            _fact("2025-09-30", 112_311_000_000, "2025-10-29", form="10-Q", fp="Q3", start="2025-01-01"),
+            cf(127_149_000_000, "2026-01-01"),
+        ]}},
+        "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [
+            _fact("2025-12-31", 91_447_000_000, "2026-02-05", start="2025-01-01"),
+            _fact("2025-09-30", 63_596_000_000, "2025-10-29", form="10-Q", fp="Q3", start="2025-01-01"),
+            cf(131_953_000_000, "2026-01-01"),
+        ]}},
+    }}}
+    monkeypatch.setattr(sec_edgar, "_fetch_json",
+                        lambda url: TICKER_MAP if "company_tickers" in url else facts)
+
+    out = sec_edgar.get_cashflow("AAPL", "quarterly", "2026-11-08")
+
+    assert "# Derived (not filed): TTM cash flow as of 2026-09-30" in out
+    assert "# Operating Cash Flow TTM: 179551" in out
+    assert "# Capital Expenditure TTM: 159804" in out
+    assert "# Free Cash Flow TTM (Operating Cash Flow - Capital Expenditure): 19747" in out
+    assert "not a figure any filing states" in out
+
+
+@pytest.mark.unit
+def test_segment_revenue_is_read_from_the_latest_filings_xbrl_instance(monkeypatch):
+    """Segment revenue is a dimensional fact; companyfacts does not carry it.
+    The latest 10-Q's instance does, so read the segment axis there."""
+    submissions = {"filings": {"recent": {
+        "form": ["10-Q"], "accessionNumber": ["0000320193-26-000123"],
+        "filingDate": ["2026-10-29"],
+    }}}
+    index = {"items": [{"name": "aapl-20260930_htm.xml"}]}
+    instance = """<xbrli:xbrl
+        xmlns:xbrli="http://www.xbrl.org/2003/instance"
+        xmlns:us-gaap="http://fasb.org/us-gaap/2025"
+        xmlns:goog="http://www.example.com/20260930">
+      <xbrli:context id="c1"><xbrli:entity><xbrli:segment>
+        <xbrldi:explicitMember xmlns:xbrldi="http://xbrl.org/2006/xbrldi"
+          dimension="us-gaap:StatementBusinessSegmentsAxis">goog:GoogleServicesMember</xbrldi:explicitMember>
+      </xbrli:segment></xbrli:entity>
+      <xbrli:period><xbrli:startDate>2026-07-01</xbrli:startDate><xbrli:endDate>2026-09-30</xbrli:endDate></xbrli:period>
+      </xbrli:context>
+      <xbrli:context id="c2"><xbrli:entity><xbrli:segment>
+        <xbrldi:explicitMember xmlns:xbrldi="http://xbrl.org/2006/xbrldi"
+          dimension="us-gaap:StatementBusinessSegmentsAxis">goog:GoogleCloudMember</xbrldi:explicitMember>
+      </xbrli:segment></xbrli:entity>
+      <xbrli:period><xbrli:startDate>2026-07-01</xbrli:startDate><xbrli:endDate>2026-09-30</xbrli:endDate></xbrli:period>
+      </xbrli:context>
+      <xbrli:context id="c4"><xbrli:entity><xbrli:segment>
+        <xbrldi:explicitMember xmlns:xbrldi="http://xbrl.org/2006/xbrldi"
+          dimension="us-gaap:StatementBusinessSegmentsAxis">goog:GoogleServicesMember</xbrldi:explicitMember>
+      </xbrli:segment></xbrli:entity>
+      <xbrli:period><xbrli:startDate>2026-01-01</xbrli:startDate><xbrli:endDate>2026-09-30</xbrli:endDate></xbrli:period>
+      </xbrli:context>
+      <xbrli:context id="c3"><xbrli:entity><xbrli:segment>
+        <xbrldi:explicitMember xmlns:xbrldi="http://xbrl.org/2006/xbrldi"
+          dimension="us-gaap:StatementBusinessSegmentsAxis">goog:GoogleServicesMember</xbrldi:explicitMember>
+        <xbrldi:explicitMember xmlns:xbrldi="http://xbrl.org/2006/xbrldi"
+          dimension="us-gaap:ProductOrServiceAxis">goog:GoogleSearchOtherMember</xbrldi:explicitMember>
+      </xbrli:segment></xbrli:entity>
+      <xbrli:period><xbrli:startDate>2026-07-01</xbrli:startDate><xbrli:endDate>2026-09-30</xbrli:endDate></xbrli:period>
+      </xbrli:context>
+      <us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax contextRef="c3"
+        unitRef="usd" decimals="-6">63350000000</us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax>
+      <us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax contextRef="c4"
+        unitRef="usd" decimals="-6">280000000000</us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax>
+      <us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax contextRef="c1"
+        unitRef="usd" decimals="-6">102000000000</us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax>
+      <us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax contextRef="c2"
+        unitRef="usd" decimals="-6">15000000000</us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax>
+    </xbrli:xbrl>"""
+
+    def fake_json(url):
+        if "company_tickers" in url:
+            return TICKER_MAP
+        if "submissions" in url:
+            return submissions
+        if "index.json" in url:
+            return index
+        return FACTS
+
+    monkeypatch.setattr(sec_edgar, "_fetch_json", fake_json)
+    monkeypatch.setattr(sec_edgar, "_fetch_text", lambda url: instance)
+
+    out = sec_edgar.get_income_statement("AAPL", "quarterly", "2026-11-08")
+
+    assert "Segment revenue as filed (latest 10-Q/10-K on or before 2026-11-08)" in out
+    assert "2026-09-30,Google Services,102000" in out
+    assert "2026-09-30,Google Cloud,15000" in out
+    # A product-axis sub-line (Google Search & other) is not the segment total.
+    assert "Google Services,63350" not in out
+    # A year-to-date total does not replace the quarter with the same end date.
+    assert "Google Services,280000" not in out
+
+
+@pytest.mark.unit
+def test_a_segment_fetch_failure_is_a_note_not_a_lost_statement(monkeypatch):
+    submissions = {"filings": {"recent": {
+        "form": ["10-Q"], "accessionNumber": ["0000320193-26-000123"],
+        "filingDate": ["2026-10-29"],
+    }}}
+
+    def fake_json(url):
+        if "company_tickers" in url:
+            return TICKER_MAP
+        if "submissions" in url:
+            return submissions
+        if "index.json" in url:
+            return {"items": [{"name": "aapl-20260930_htm.xml"}]}
+        return FACTS
+
+    def boom(url):
+        raise sec_edgar.VendorUnavailableError("SEC EDGAR request failed (503)")
+
+    monkeypatch.setattr(sec_edgar, "_fetch_json", fake_json)
+    monkeypatch.setattr(sec_edgar, "_fetch_text", boom)
+
+    out = sec_edgar.get_income_statement("AAPL", "quarterly", "2026-11-08")
+
+    assert "81300" in out
+    assert "Segment revenue: not available this run" in out
+
+
+@pytest.mark.unit
+def test_statements_name_the_coverage_they_do_not_have(monkeypatch):
+    """Segment revenue and non-GAAP reconciliations are not in companyfacts, and
+    free cash flow is not a filed line. Say so in the output so a thin section is
+    not filled in by estimation."""
+    facts = {"facts": {"us-gaap": {
+        "Revenues": {"units": {"USD": [
+            _fact("2025-12-31", 100_000_000, "2026-02-20", start="2025-01-01")]}},
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
+            _fact("2025-12-31", 40_000_000, "2026-02-20", start="2025-01-01")]}},
+        "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [
+            _fact("2025-12-31", 15_000_000, "2026-02-20", start="2025-01-01")]}},
+    }}}
+    monkeypatch.setattr(sec_edgar, "_fetch_json",
+                        lambda url: TICKER_MAP if "company_tickers" in url else facts)
+
+    income = sec_edgar.get_income_statement("AAPL", "annual", "2026-03-01")
+    cash = sec_edgar.get_cashflow("AAPL", "annual", "2026-03-01")
+
+    assert "segment revenue, when filed, follows the table" in income
+    assert "non-GAAP reconciliations are not served" in income
+    assert "Free cash flow is not a filed line" in cash
+    assert "vendor's freeCashflow field" in cash

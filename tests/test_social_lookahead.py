@@ -221,3 +221,107 @@ def test_reddit_full_page_does_not_vouch_for_older_days(monkeypatch):
         start_date=str(today - timedelta(days=6)), end_date=str(today - timedelta(days=5)),
     )
     assert "unavailable" in out and "no reddit posts" not in out.lower()
+
+
+@pytest.mark.unit
+def test_a_prefetched_source_placeholder_reaches_the_data_quality_note():
+    from tradingagents.agents.analysts.sentiment_analyst import _record_unavailable_block
+    from tradingagents.dataflows import quality
+
+    quality.reset()
+    _record_unavailable_block("stocktwits", "sentiment_data", "<stocktwits unavailable: not signed in>")
+    _record_unavailable_block("reddit", "sentiment_data", "13 posts")
+
+    entries = quality.snapshot()
+
+    assert len(entries) == 1
+    assert entries[0]["method"] == "stocktwits"
+    assert entries[0]["status"] == "failed"
+
+
+class _JsonBody:
+    """urlopen() stub whose read() accepts the capped-read size."""
+
+    def __init__(self, payload):
+        self._body = json.dumps(payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self, n=-1):
+        return self._body if n < 0 else self._body[:n]
+
+
+@pytest.mark.unit
+def test_reddit_oauth_adds_score_and_comment_counts(monkeypatch):
+    from datetime import timedelta
+
+    from tradingagents.dataflows.vendors import reddit
+
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
+    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
+    reddit._token_cache.clear()
+    now = datetime.now(UTC).timestamp()
+    today = datetime.now(UTC).date()
+
+    def fake_urlopen(req, timeout=0):
+        if "access_token" in req.full_url:
+            return _JsonBody({"access_token": "tok", "expires_in": 3600})
+        return _JsonBody({"data": {"children": [{"data": {
+            "title": "GOOGL yolo", "selftext": "body", "created_utc": now,
+            "subreddit": "stocks", "score": 42, "num_comments": 7,
+        }}]}})
+
+    monkeypatch.setattr(reddit, "urlopen", fake_urlopen)
+    out = reddit.fetch_reddit_posts(
+        "GOOGL", subreddits=("stocks",),
+        start_date=str(today - timedelta(days=1)), end_date=str(today),
+    )
+
+    assert "score 42, 7 comments" in out
+    assert "GOOGL yolo" in out
+
+
+@pytest.mark.unit
+def test_reddit_oauth_failure_falls_back_to_keyless_rss(monkeypatch):
+    from datetime import timedelta
+
+    from tradingagents.dataflows.vendors import reddit
+
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
+    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
+    monkeypatch.setattr(reddit, "_reddit_token", lambda timeout: None)
+    today = datetime.now(UTC).date()
+    now = datetime.now(UTC).timestamp()
+    monkeypatch.setattr(reddit, "_fetch_subreddit_rss", lambda *a, **k: [{
+        "title": "GOOGL rss post", "selftext": "body", "created_utc": now,
+        "subreddit": "stocks",
+    }])
+
+    out = reddit.fetch_reddit_posts(
+        "GOOGL", subreddits=("stocks",),
+        start_date=str(today - timedelta(days=1)), end_date=str(today),
+    )
+
+    assert "GOOGL rss post" in out
+    assert "score" not in out
+
+
+@pytest.mark.unit
+def test_the_sentiment_prompt_carries_a_verified_market_snapshot():
+    # A post's "+1.8% this week" is a claim; the snapshot is what lets the
+    # analyst check it instead of repeating it as the run's own fact.
+    from tradingagents.agents.analysts.sentiment_analyst import _build_system_message
+
+    prompt = _build_system_message(
+        ticker="AAPL", start_date="2026-11-01", end_date="2026-11-08",
+        news_block="NEWS", stocktwits_block="ST", reddit_block="RD",
+        market_block="SNAPSHOT: close 284.78",
+    )
+
+    assert "<start_of_market>" in prompt
+    assert "SNAPSHOT: close 284.78" in prompt
+    assert "Verify price claims against the snapshot" in prompt

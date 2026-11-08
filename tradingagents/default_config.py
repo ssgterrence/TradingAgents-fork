@@ -182,7 +182,9 @@ def build_default_config() -> dict:
             # Statements come from SEC EDGAR as filed (US filers), then Yahoo; the
         # overview and insider tools, which SEC EDGAR does not serve, from Yahoo.
         "fundamental_data": "sec_edgar,yfinance",  # Options: sec_edgar, alpha_vantage, yfinance
-            "news_data": "yfinance",             # Options: alpha_vantage, yfinance
+            # Options: alpha_vantage, yfinance. Add a second, in order, for an
+            # outage fallback: "yfinance,alpha_vantage".
+            "news_data": "yfinance",
             "macro_data": "fred",                # Options: fred (needs FRED_API_KEY)
             "prediction_markets": "polymarket",  # Options: polymarket (keyless)
         },

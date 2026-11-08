@@ -79,6 +79,47 @@ def test_a_past_run_with_no_vendor_event_does_not_claim_there_was_none(monkeypat
 
 
 @pytest.mark.unit
+def test_a_current_run_with_only_a_past_date_reports_it_as_last_reported(monkeypatch):
+    # The vendor calendar can lag after a report: it still returns the quarter
+    # just filed and no next date. That is the last report, not an upcoming one.
+    monkeypatch.setattr(date_window, "get_current_date", lambda: "2026-11-08")
+    monkeypatch.setattr(earnings, "yf_retry", lambda fn: _calendar([date(2026, 10, 29)]))
+
+    out = earnings.get_earnings_calendar("GOOGL", "2026-11-08")
+
+    assert "Last reported: 2026-10-29" in out
+    assert "Earnings date(s): 2026-10-29" not in out
+    assert "Next scheduled: not provided" in out
+    assert "not a statement that no future earnings event exists" in out
+
+
+@pytest.mark.unit
+def test_extra_earnings_dates_supply_the_next_event_when_the_calendar_lags(monkeypatch):
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    class FakeTicker:
+        def __init__(self, *a, **k):
+            pass
+
+        @property
+        def calendar(self):
+            return _calendar([date(2026, 10, 29)])
+
+        def get_earnings_dates(self, limit=12):
+            return SimpleNamespace(index=[datetime(2026, 10, 29), datetime(2027, 1, 26)])
+
+    monkeypatch.setattr(date_window, "get_current_date", lambda: "2026-11-08")
+    monkeypatch.setattr(earnings.yf, "Ticker", FakeTicker)
+    monkeypatch.setattr(earnings, "yf_retry", lambda fn: fn())
+
+    out = earnings.get_earnings_calendar("GOOGL", "2026-11-08")
+
+    assert "Last reported: 2026-10-29" in out
+    assert "Earnings date(s): 2027-01-26" in out
+
+
+@pytest.mark.unit
 def test_the_tool_is_offered_to_news_and_fundamentals():
     assert get_earnings_calendar in news_analyst.TOOLS
     assert get_earnings_calendar in fundamentals_analyst.TOOLS

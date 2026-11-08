@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from tradingagents.agents.rating import run_rating
+from tradingagents.dataflows.quality import render_markdown as render_data_quality
 
 
 def analyst_names(keys) -> list[str]:
@@ -103,6 +104,12 @@ def write_report_tree(final_state: dict, ticker: str, save_path, settings: dict 
     save_path = Path(save_path)
     save_path.mkdir(parents=True, exist_ok=True)
     parts = _report_parts(final_state)
+    quality_text = render_data_quality(final_state.get("data_quality") or [])
+    if quality_text:
+        # A vendor failure explains a thin section; put it before the reports
+        # rather than leaving the reader to infer why one is missing.
+        parts = [("Data Quality", "0_data_quality",
+                  [("Run Data Quality", "quality.md", quality_text)])] + parts
     sections = []
     for heading, folder, written in parts:
         (save_path / folder).mkdir(exist_ok=True)
@@ -143,6 +150,9 @@ def write_report_tree(final_state: dict, ticker: str, save_path, settings: dict 
         for _agent, filename, _path in agents:
             if (folder, filename) not in current_files:
                 (save_path / folder / filename).unlink(missing_ok=True)
+    if not quality_text:
+        # A clean run must not inherit the previous run's warning.
+        (save_path / "0_data_quality" / "quality.md").unlink(missing_ok=True)
     return save_path / "complete_report.md"
 
 
@@ -238,6 +248,10 @@ def rebuild_html(report_dir, settings: dict | None = None) -> Path:
     if settings is None:
         settings = settings_from_report_header(_read(report_dir / "complete_report.md"))
     parts = _report_parts(state)
+    quality_text = _read(report_dir / "0_data_quality" / "quality.md")
+    if quality_text:
+        parts = [("Data Quality", "0_data_quality",
+                  [("Run Data Quality", "quality.md", quality_text)])] + parts
     chart_data = build_chart_data_for_report(ticker, state)
     page = render_report(ticker, state, settings, parts, chart_data=chart_data)
     target = report_dir / "complete_report.html"

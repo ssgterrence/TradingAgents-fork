@@ -115,7 +115,12 @@ def get_fundamentals(
          else f"{debt_to_equity}% ({debt_to_equity / 100:.2f}x)"),
         ("Current Ratio", info.get("currentRatio")),
         ("Book Value", money("bookValue", main)),
-        ("Free Cash Flow", money("freeCashflow", reported)),
+        # The vendor computes this from its own TTM window and may include items
+        # the statements do not (finance leases, for one). Label it so it is not
+        # read as Operating Cash Flow minus Capital Expenditure from the filed
+        # statements, which can be a materially different number.
+        ("Free Cash Flow (vendor-computed TTM; may differ from statement OCF - Capex)",
+         money("freeCashflow", reported)),
     ]
 
     # An ETF is a fund, not an operating company. Its P/E and P/B are
@@ -141,6 +146,13 @@ def get_fundamentals(
         ]
 
     lines = [f"{label}: {v}" for label, v in fields if v is not None]
+    if not is_etf and info.get("freeCashflow") is not None:
+        lines.append(
+            "Free-cash-flow note: the vendor-computed figure above uses the "
+            "vendor's own definition and TTM window. It may differ from "
+            "Operating Cash Flow minus Capital Expenditure in the filed "
+            "statements; when both are quoted, name the source and the window."
+        )
     if is_etf:
         lines.append(
             "Valuation note: P/E and P/B above are fund aggregates, not "

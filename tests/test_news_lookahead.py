@@ -220,6 +220,32 @@ def test_a_quote_feed_with_articles_is_not_searched(monkeypatch):
 
 
 @pytest.mark.unit
+def test_a_failed_quote_feed_still_uses_the_search_fallback(monkeypatch):
+    # Yahoo retired the quote feed's news endpoint and yfinance reports the
+    # block page as an exception (YFDataException). That must not skip Search,
+    # or one broken endpoint takes company news down for the whole run.
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    searched = _ticker_with([], monkeypatch, search_news=[
+        _tagged("ABOUT AAPL", today, "AAPL"),
+    ])
+
+    class FailingTicker:
+        def __init__(self, *a, **k):
+            pass
+
+        def get_news(self, count=20):
+            raise RuntimeError("YFDataException")
+
+    monkeypatch.setattr(ynews.yf, "Ticker", FailingTicker)
+
+    out = ynews.get_news_yfinance("AAPL", today, today)
+
+    assert searched == ["AAPL"]
+    assert "ABOUT AAPL" in out
+    assert "relevance-picked sample" in out
+
+
+@pytest.mark.unit
 def test_news_neither_yahoo_source_answers_is_a_vendor_outage(monkeypatch):
     from tradingagents.dataflows.errors import VendorUnavailableError
 

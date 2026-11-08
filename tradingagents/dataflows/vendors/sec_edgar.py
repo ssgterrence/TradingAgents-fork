@@ -21,7 +21,9 @@ import json
 import logging
 import math
 import os
+import re
 import time
+import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from pathlib import Path
 
@@ -36,6 +38,20 @@ logger = logging.getLogger(__name__)
 
 _TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 _FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+_ARCHIVE_INDEX_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/index.json"
+_ARCHIVE_FILE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{name}"
+
+# Segment revenue is a dimensional fact, which companyfacts does not carry.
+# The latest 10-Q/10-K's XBRL instance does; read the segment axis there.
+_SEGMENT_AXIS = "StatementBusinessSegmentsAxis"
+_REVENUE_TAGS = (
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "RevenueFromContractWithCustomerIncludingAssessedTax",
+    "Revenues",
+    "SalesRevenueNet",
+)
+_XBRL_INSTANCE_MAX_BYTES = 20 * 1024 * 1024
 
 # A filing history only changes when something new is filed, so one fetch per
 # company per day serves every date a run asks about.
@@ -60,6 +76,15 @@ _STATEMENTS: dict[str, list[tuple[str, tuple[str, ...]]]] = {
         ("Cost of Revenue", ("CostOfRevenue", "CostOfGoodsAndServicesSold")),
         ("Gross Profit", ("GrossProfit",)),
         ("Operating Income", ("OperatingIncomeLoss",)),
+        # The non-operating line and the tax line make the gap between operating
+        # and net income readable from the filing, instead of reverse-engineering
+        # it from an assumed tax rate (Alphabet's investment revaluations are a
+        # large, two-way item there).
+        ("Nonoperating Income (Expense)", ("NonoperatingIncomeExpense",
+                                           "OtherNonoperatingIncomeExpense")),
+        ("Pretax Income", ("IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                           "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments")),
+        ("Income Tax Expense", ("IncomeTaxExpenseBenefit",)),
         ("Net Income", ("NetIncomeLoss",)),
         ("Diluted EPS", ("EarningsPerShareDiluted",)),
     ],
@@ -133,6 +158,34 @@ def _cached_json(url: str, name: str) -> dict:
     return data
 
 
+def _fetch_text(url: str) -> str:
+    """Read a public EDGAR text/XML document, respecting SEC's identification rule."""
+    try:
+        response = requests.get(url, headers={"User-Agent": _user_agent()}, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        raise VendorUnavailableError(f"SEC EDGAR request failed ({status or type(exc).__name__})") from exc
+    if len(response.content) > _XBRL_INSTANCE_MAX_BYTES:
+        raise VendorUnavailableError(
+            f"SEC EDGAR document exceeded {_XBRL_INSTANCE_MAX_BYTES} bytes; refusing to parse"
+        )
+    return response.text
+
+
+def _cached_text(url: str, name: str) -> str:
+    path = Path(get_config()["data_cache_dir"]) / "sec_edgar" / name
+    if path.exists() and time.time() - path.stat().st_mtime < _CACHE_TTL_SECONDS:
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    data = _fetch_text(url)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    replace_file(path, lambda temp: Path(temp).write_text(data, encoding="utf-8"))
+    return data
+
+
 def cik_for(ticker: str) -> str | None:
     """The filer's CIK, or None when the ticker is not a US filer."""
     table = _cached_json(_TICKERS_URL, "company_tickers.json")
@@ -188,6 +241,140 @@ def _as_of(facts: dict, tags: tuple[str, ...], as_of_date: str, spans: tuple[tup
     return dict(sorted(values.items())), chosen_unit
 
 
+def _bare(name: str) -> str:
+    """A Clark-notation or prefixed XML name without its namespace/prefix."""
+    return name.rsplit("}", 1)[-1].rsplit(":", 1)[-1]
+
+
+def _humanize_member(name: str) -> str:
+    """``GoogleServicesMember`` -> ``Google Services`` for a readable table."""
+    name = re.sub(r"Member$", "", name)
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name).strip() or name
+
+
+def _latest_filing(cik: str, as_of_date: str) -> dict | None:
+    """The newest 10-Q/10-K filed on or before ``as_of_date``, or None."""
+    submissions = _cached_json(_SUBMISSIONS_URL.format(cik=cik), f"submissions-{cik}.json")
+    recent = (submissions.get("filings") or {}).get("recent") or {}
+    forms = recent.get("form") or []
+    accessions = recent.get("accessionNumber") or []
+    filed_dates = recent.get("filingDate") or []
+    for form, accession, filed in zip(forms, accessions, filed_dates, strict=False):
+        if form in ("10-Q", "10-K", "10-Q/A", "10-K/A") and filed <= as_of_date:
+            return {"form": form, "accession": accession, "filed": filed}
+    return None
+
+
+def _segment_instance_url(cik: str, accession: str) -> str | None:
+    """The XBRL instance document of a filing, from its archive index."""
+    accession_nodash = accession.replace("-", "")
+    index = _cached_json(
+        _ARCHIVE_INDEX_URL.format(cik=int(cik), accession=accession_nodash),
+        f"index-{accession_nodash}.json",
+    )
+    # EDGAR's archive index has served both {"items": [...]} and
+    # {"directory": {"item": [...]}} over time; accept either.
+    items = index.get("items")
+    if items is None:
+        items = (index.get("directory") or {}).get("item") or []
+    names = [str(item.get("name") or "") for item in items]
+    candidates = [name for name in names if name.lower().endswith("_htm.xml")]
+    if not candidates:
+        skip = ("_cal", "_def", "_lab", "_pre", "_ref", "filingsummary")
+        candidates = [
+            name for name in names
+            if name.lower().endswith(".xml") and not any(marker in name.lower() for marker in skip)
+        ]
+    if not candidates:
+        return None
+    return _ARCHIVE_FILE_URL.format(
+        cik=int(cik), accession=accession_nodash, name=candidates[0],
+    )
+
+
+def _segment_revenue(cik: str, as_of_date: str, filing: dict) -> str:
+    """Segment-axis revenue from the latest filing's XBRL instance, or an empty note.
+
+    ``companyfacts`` carries only consolidated facts; the segment breakdown is a
+    dimensional fact in the instance document. Only the latest two period ends
+    are shown, so the table stays readable.
+    """
+    url = _segment_instance_url(cik, filing["accession"])
+    if url is None:
+        return ""
+    xml = _cached_text(url, f"instance-{filing['accession'].replace('-', '')}.xml")
+    root = ET.fromstring(xml)
+
+    contexts: dict[str, tuple[str | None, str, str, int]] = {}
+    for element in root.iter():
+        if _bare(element.tag) != "context":
+            continue
+        context_id = element.get("id")
+        period_start = period_end = None
+        segment_members = []
+        other_dimensions = []
+        for child in element.iter():
+            name = _bare(child.tag)
+            if name == "startDate":
+                period_start = (child.text or "").strip()
+            elif name == "endDate":
+                period_end = (child.text or "").strip()
+            elif name == "explicitMember":
+                dimension = _bare(child.get("dimension") or "")
+                if dimension.endswith("Axis") and "Segment" in dimension:
+                    segment_members.append(_bare((child.text or "").strip()))
+                else:
+                    other_dimensions.append(dimension)
+        # Only the segment total: a context also sliced by product, geography,
+        # or another axis is a sub-line (Google Search & other, YouTube, ...),
+        # not the segment's revenue. Keeping only the single-dimension context
+        # avoids reporting 63,350 as "Google Services" when the segment total
+        # is 96,302.
+        if (context_id and period_start and period_end
+                and len(segment_members) == 1 and not other_dimensions):
+            days = (date.fromisoformat(period_end) - date.fromisoformat(period_start)).days
+            contexts[context_id] = (period_start, period_end, segment_members[0], days)
+    if not contexts:
+        return ""
+
+    # A 10-Q may report the quarter and the year to date under one end date.
+    # Keep the shortest span for a period/segment, so a quarter is not replaced
+    # by a nine-month total.
+    rows: dict[tuple[str, str], tuple[float, int]] = {}
+    for tag in _REVENUE_TAGS:
+        for element in root.iter():
+            if _bare(element.tag) != tag:
+                continue
+            context = contexts.get(element.get("contextRef"))
+            if context is None:
+                continue
+            try:
+                value = float(element.text)
+            except (TypeError, ValueError):
+                continue
+            key = (context[1], context[2])
+            if key not in rows or context[3] < rows[key][1]:
+                rows[key] = (value, context[3])
+    if not rows:
+        return ""
+
+    periods = sorted({end for end, _member in rows}, reverse=True)[:2]
+    lines = [
+        f"# Segment revenue as filed (latest 10-Q/10-K on or before {as_of_date})",
+        f"# Source: {filing['form']} filed {filing['filed']} "
+        f"(accession {filing['accession']})",
+        "# Segment names are the filer's XBRL segment-axis members.",
+        "Period end,Segment,Revenue (USD millions)",
+    ]
+    for end in periods:
+        for period_end, member in sorted(rows):
+            if period_end == end:
+                lines.append(
+                    f"{end},{_humanize_member(member)},{_millions(rows[(period_end, member)][0])}"
+                )
+    return "\n".join(lines) + "\n"
+
+
 def _statement(kind: str, ticker: str, freq: str, as_of_date: str, title: str) -> str:
     as_of_date = as_of_date or datetime.now().strftime("%Y-%m-%d")
     cik = cik_for(ticker)
@@ -219,9 +406,28 @@ def _statement(kind: str, ticker: str, freq: str, as_of_date: str, title: str) -
         raise NoMarketDataError(ticker, ticker, f"no {freq} {title.lower()} filed by {as_of_date}")
     tagged = {label: line for label, line in lines.items() if line[0]}
     untagged = [label for label in lines if label not in tagged]
+    # Say what this vendor does not serve, so a thin section is not mistaken for
+    # a gap the model should fill by estimation. Segment revenue lives in a
+    # filing's dimensional facts, and non-GAAP reconciliations in 8-K exhibits;
+    # neither is part of the consolidated companyfacts feed used here.
+    coverage = ""
+    if kind == "income_statement":
+        coverage = (
+            "# Coverage: consolidated figures from companyfacts; segment revenue, "
+            "when filed, follows the table; non-GAAP reconciliations are not served "
+            "(the GAAP non-operating and tax lines make the operating-to-net bridge "
+            "explicit).\n"
+        )
+    elif kind == "cashflow":
+        coverage = (
+            "# Free cash flow is not a filed line: compute Operating Cash Flow minus "
+            "Capital Expenditure over the same period, and do not compare it to a "
+            "vendor's freeCashflow field without checking that vendor's definition.\n"
+        )
     header = (
         f"# {title} for {ticker.upper()} ({freq}), USD in millions unless the column says otherwise\n"
         f"# SEC EDGAR facts filed on or before {as_of_date}, at the values filed then\n"
+        + coverage
         + (f"# Not tagged by this filer: {', '.join(untagged)}\n" if untagged else "")
         + "\n"
     )
@@ -236,7 +442,79 @@ def _statement(kind: str, ticker: str, freq: str, as_of_date: str, title: str) -
             value = values.get((end, index)) if chosen[label].get(end) == index else None
             cells.append("" if value is None else _millions(value) if unit == "USD" else f"{value:.2f}")
         rows.append(",".join([end + names[index]] + cells))
-    return header + "\n".join(rows) + "\n"
+    derived = _derived_ttm_cashflow(us_gaap, as_of_date, quarterly) if kind == "cashflow" else ""
+    segments = ""
+    if kind == "income_statement":
+        try:
+            filing = _latest_filing(cik, as_of_date)
+            if filing:
+                segments = _segment_revenue(cik, as_of_date, filing)
+        except (VendorUnavailableError, ET.ParseError, ValueError) as exc:
+            # The consolidated statement is already complete; a segment
+            # enrichment failure is a note, not a reason to lose the report.
+            logger.warning("Segment revenue unavailable for %s: %s", ticker, exc)
+            segments = (
+                f"# Segment revenue: not available this run ({type(exc).__name__}); "
+                "the consolidated figures above are unaffected.\n"
+            )
+    return header + "\n".join(rows) + "\n" + derived + segments
+
+
+def _ttm_for(values: dict, annual_values: dict) -> tuple[str, float] | None:
+    """A trailing-twelve-month figure from filed annual and year-to-date values.
+
+    A 10-Q cash flow is often filed only year to date, so TTM is the last fiscal
+    year plus this year to date minus the same span a year earlier. That is a
+    derived figure, not one any filing states; the caller labels it as such.
+    Discrete quarters are summed only when four are actually filed.
+    """
+    if not values:
+        return None
+    end, index = max(values)
+    if index == 0:
+        quarters = sorted({period for period, span in values if span == 0}, reverse=True)
+        if len(quarters) < 4:
+            return None
+        picked = quarters[:4]
+        if (date.fromisoformat(picked[0]) - date.fromisoformat(picked[3])).days > 400:
+            return None
+        return picked[0], sum(values[(period, 0)] for period in picked)
+
+    try:
+        prior_end = date.fromisoformat(end).replace(year=date.fromisoformat(end).year - 1).isoformat()
+    except ValueError:
+        return None
+    prior = values.get((prior_end, index))
+    annual_period = max((period for period in annual_values if period[0] < end), default=None)
+    if prior is None or annual_period is None:
+        return None
+    return end, annual_values[annual_period] + values[(end, index)] - prior
+
+
+def _derived_ttm_cashflow(us_gaap: dict, as_of_date: str, quarterly: bool) -> str:
+    """A statement-derived TTM cash flow note, or an empty string."""
+    if not quarterly:
+        return ""
+    spans = (_SPANS["quarterly"], *((low, high) for low, high, _ in _YEAR_TO_DATE))
+    annual_spans = (_SPANS["annual"],)
+    labels = {label: _as_of(us_gaap, tags, as_of_date, spans) for label, tags in _STATEMENTS["cashflow"]}
+    annual = {
+        label: _as_of(us_gaap, tags, as_of_date, annual_spans, _ANNUAL_FORMS)[0]
+        for label, tags in _STATEMENTS["cashflow"]
+    }
+    ocf = _ttm_for(labels["Operating Cash Flow"][0], annual["Operating Cash Flow"])
+    capex = _ttm_for(labels["Capital Expenditure"][0], annual["Capital Expenditure"])
+    if ocf is None or capex is None or ocf[0] != capex[0]:
+        return ""
+    end = ocf[0]
+    return (
+        f"# Derived (not filed): TTM cash flow as of {end}\n"
+        f"# Operating Cash Flow TTM: {_millions(ocf[1])}\n"
+        f"# Capital Expenditure TTM: {_millions(capex[1])}\n"
+        f"# Free Cash Flow TTM (Operating Cash Flow - Capital Expenditure): {_millions(ocf[1] - capex[1])}\n"
+        f"# Free cash flow is a derived metric, not a figure any filing states; state\n"
+        f"# its definition and window when comparing it with a vendor's figure.\n"
+    )
 
 
 def _millions(value: float) -> str:

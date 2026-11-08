@@ -30,7 +30,8 @@ from tradingagents.agents.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
-from tradingagents.agents.tools import get_news
+from tradingagents.agents.tools import get_news, get_verified_market_snapshot
+from tradingagents.dataflows import quality
 from tradingagents.dataflows.vendors.reddit import (
     CRYPTO_SUBREDDITS,
     DEFAULT_SUBREDDITS,
@@ -42,6 +43,20 @@ from tradingagents.dataflows.vendors.stocktwits import fetch_stocktwits_messages
 
 def _seven_days_back(trade_date: str) -> str:
     return (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+
+
+def _record_unavailable_block(source: str, category: str, block: str) -> None:
+    """Add a pre-fetched source's placeholder to the run's data-quality note.
+
+    The sentiment sources are fetched before the model call, so they do not go
+    through route_to_vendor and would otherwise fail silently.
+    """
+    text = block.lstrip() if isinstance(block, str) else ""
+    if text.startswith(("DATA_UNAVAILABLE", "NO_DATA_AVAILABLE")) or (
+        text.startswith("<") and "unavailable" in text.lower()
+    ):
+        quality.record(source, category, "failed", [source],
+                       failures=[(source, "unavailable")])
 
 
 def create_sentiment_analyst(llm):
@@ -64,6 +79,16 @@ def create_sentiment_analyst(llm):
         # returns a string (no exceptions surface from here), so the LLM
         # always sees something — either real data or a clear placeholder.
         news_block = get_news.func(ticker, start_date, end_date)
+        # Social posts quote price moves as fact ("up 1.8% this week"). Give
+        # the model the verified bars so it can check them instead of repeating
+        # a stranger's number as the run's own observation.
+        try:
+            market_block = get_verified_market_snapshot.func(
+                ticker, end_date, 10, trade_date=end_date
+            )
+        except Exception as exc:  # noqa: BLE001 — optional verification block
+            market_block = f"<market snapshot unavailable: {type(exc).__name__}>"
+        _record_unavailable_block("get_verified_market_snapshot", "core_stock_apis", market_block)
         # Pass the analysis window so a historical run trims social posts to it
         # instead of leaking today's chatter into a backtest (#1220).
         screen = jev_screen(ticker)
@@ -74,6 +99,8 @@ def create_sentiment_analyst(llm):
         reddit_block = fetch_reddit_posts(
             ticker, subreddits, start_date=start_date, end_date=end_date, screen=screen
         )
+        _record_unavailable_block("stocktwits", "sentiment_data", stocktwits_block)
+        _record_unavailable_block("reddit", "sentiment_data", reddit_block)
 
         system_message = _build_system_message(
             ticker=ticker,
@@ -82,6 +109,7 @@ def create_sentiment_analyst(llm):
             news_block=news_block,
             stocktwits_block=stocktwits_block,
             reddit_block=reddit_block,
+            market_block=market_block,
             subreddits=subreddits,
         )
 
@@ -135,6 +163,7 @@ def _build_system_message(
     news_block: str,
     stocktwits_block: str,
     reddit_block: str,
+    market_block: str,
     subreddits: tuple[str, ...] = DEFAULT_SUBREDDITS,
 ) -> str:
     """Assemble the sentiment-analyst system message with structured data blocks."""
@@ -144,7 +173,7 @@ def _build_system_message(
         character = f"r/{subreddits[0]} leans toward the coin's holders; r/CryptoCurrency and r/CryptoMarkets are broader"
     else:
         character = "r/CryptoCurrency and r/CryptoMarkets are broad crypto communities"
-    return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary data sources that have already been collected for you.
+    return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary sentiment sources and a verified market snapshot that have already been collected for you.
 
 ## Data sources (pre-fetched, in this prompt)
 
@@ -163,11 +192,18 @@ Fast-moving signal. Each message carries a user-labeled sentiment tag (Bullish /
 <end_of_stocktwits>
 
 ### Reddit posts — {", ".join(f"r/{sub}" for sub in subreddits)} (past 7 days)
-Community discussion, without vote or comment counts. Subreddit character matters ({character}).
+Community discussion. Posts carry score and comment counts when Reddit OAuth is configured; the keyless RSS fallback has neither. Subreddit character matters ({character}).
 
 <start_of_reddit>
 {reddit_block}
 <end_of_reddit>
+
+### Verified market snapshot — as of {end_date}
+Use this as the source of truth for price levels and recent moves. When a social post states a move ("up 1.8% this week", "$350 soon"), check it here before repeating it as fact; a post's number is a claim, not data.
+
+<start_of_market>
+{market_block}
+<end_of_market>
 
 ## How to analyze this data (best practices)
 
@@ -175,7 +211,7 @@ Community discussion, without vote or comment counts. Subreddit character matter
 
 2. **Look for cross-source divergences.** If news framing is bearish but StockTwits is overwhelmingly bullish, that mismatch is itself a signal — it can mean retail is leaning into a thesis the news flow hasn't caught up to (or vice versa, that retail is chasing while institutions are cautious).
 
-3. **Read Reddit posts for substance.** The feed carries no vote or comment counts, so judge a post by its body excerpt, not its title alone, and do not infer engagement.
+3. **Read Reddit posts for substance.** Judge a post by its body excerpt, not its title alone. When score/comment counts appear, use them as an engagement weight; when they are absent (keyless RSS fallback), do not infer engagement.
 
 4. **Distinguish opinion from event.** A news headline ("Nvidia announces $500M Corning deal") is an event; a StockTwits post ("buying NVDA, this is going to moon") is opinion. Both are inputs but should be weighted differently in your conclusions.
 
@@ -185,7 +221,9 @@ Community discussion, without vote or comment counts. Subreddit character matter
 
 7. **Identify catalysts and risks** that emerge across sources — news of upcoming earnings, product launches, competitive threats, macro headlines, etc.
 
-8. **Past sentiment is not predictive.** Frame your conclusions as signal for the trader to weigh alongside fundamentals and technicals, not as a price call.
+8. **Verify price claims against the snapshot.** A percentage or price level quoted in a post is not a fact until the verified market snapshot agrees; say when it does not, and cite the snapshot instead.
+
+9. **Past sentiment is not predictive.** Frame your conclusions as signal for the trader to weigh alongside fundamentals and technicals, not as a price call.
 
 ## Output fields
 

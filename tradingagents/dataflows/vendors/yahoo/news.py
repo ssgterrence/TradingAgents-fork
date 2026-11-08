@@ -101,11 +101,11 @@ def get_news_yfinance(
 ) -> str:
     """News about ``ticker`` published in the window, from Yahoo Finance.
 
-    The symbol's quote feed comes first. When it is empty, Yahoo search serves
-    the articles tagged with the symbol; when it has none, or neither answers,
-    Yahoo news is unavailable, which is not an absence of news, and a configured
-    next vendor is tried. Search results are a sample, so finding none in the
-    window never reads as "no news".
+    The symbol's quote feed comes first. When it is empty or fails, Yahoo search
+    serves the articles tagged with the symbol; when it has none, or neither
+    answers, Yahoo news is unavailable, which is not an absence of news, and a
+    configured next vendor is tried. Search results are a sample, so finding
+    none in the window never reads as "no news".
     """
     article_limit = get_config()["news_article_limit"]
     # Query Yahoo with the canonical symbol, like every other yfinance path —
@@ -114,16 +114,32 @@ def get_news_yfinance(
     canonical = normalize_symbol(ticker)
     resolved = "" if canonical == ticker else f" (resolved to {canonical})"
     subject = f"news for {ticker}{resolved}"
-    feed = yf_retry(lambda: yf.Ticker(canonical).get_news(count=article_limit)) or []
+    # The quote feed's news endpoint is the fragile one: Yahoo retired the
+    # /xhr/ncp path and the GraphQL replacement can answer with a block page,
+    # which yfinance reports as YFDataException. That failure is about the
+    # vendor, not the symbol, so it must not skip the Search fallback below.
+    feed: list = []
+    feed_error: VendorUnavailableError | None = None
+    try:
+        feed = yf_retry(lambda: yf.Ticker(canonical).get_news(count=article_limit)) or []
+    except VendorUnavailableError as exc:
+        feed_error = exc
+
     articles = [_extract_article_data(a) for a in feed]
     if not feed:
-        found, answered = _search_news(canonical, article_limit)
+        try:
+            found, answered = _search_news(canonical, article_limit)
+        except Exception as exc:  # noqa: BLE001 — report it as a vendor outage, not a crash
+            raise feed_error or VendorUnavailableError(
+                f"Yahoo Finance search failed: {type(exc).__name__}") from exc
         if not answered:
-            raise VendorUnavailableError(f"Yahoo Finance returned no news response for {canonical}")
+            raise feed_error or VendorUnavailableError(
+                f"Yahoo Finance returned no news response for {canonical}")
         if not found:
             # With the quote feed empty, no tagged article says nothing about the
             # company's news (Yahoo tags no article with most non-US listings).
-            raise VendorUnavailableError(f"Yahoo Finance has no news articles tagged {canonical}")
+            raise feed_error or VendorUnavailableError(
+                f"Yahoo Finance has no news articles tagged {canonical}")
         articles = [_extract_article_data(a) for a in found]
 
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
@@ -131,7 +147,19 @@ def get_news_yfinance(
     # Keep only articles within the requested window (look-ahead safe).
     in_range = [a for a in articles if in_window(a["pub_date"], start_dt, end_dt)]
     if in_range:
-        return f"## {ticker}{resolved} News, from {start_date} to {end_date}:\n\n{_format_articles(in_range)}"
+        note = ""
+        if not feed:
+            # Name the weaker source: Search returns a relevance-picked sample,
+            # not the quote feed, and the reader should weigh it accordingly.
+            note = (
+                "\nNote: the quote feed did not serve these articles; they come "
+                "from Yahoo search, a relevance-picked sample rather than the "
+                "full feed.\n"
+            )
+        return (
+            f"## {ticker}{resolved} News, from {start_date} to {end_date}:\n\n"
+            f"{_format_articles(in_range)}{note}"
+        )
 
     if not feed:
         return (f"<Yahoo Finance news unavailable for {start_date}..{end_date}: Yahoo search "

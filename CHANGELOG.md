@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Changes that need action when upgrading are listed under "Upgrading from" in their release.
 
+## [Unreleased]
+
+### Fixed
+
+- Company news no longer disappears when Yahoo's quote-feed news endpoint fails. The Search fallback now runs on an exception as well as on an empty feed, so a retired or blocked endpoint does not take `get_news` down for the run. yfinance is raised to 1.8.0, whose news request replaces the endpoint Yahoo retired.
+- A run records which vendor calls failed or needed a fallback and shows a **Data Quality** note in the report, so a thin section says why instead of leaving the reason unknown.
+- `get_earnings_calendar` separates the last reported date from the next scheduled one, adds `get_earnings_dates` where Yahoo serves it, and no longer presents a past date as an upcoming event.
+- Yahoo's vendor-computed free cash flow is labelled as such, and SEC cash-flow statements now show a statement-derived TTM free cash flow (OCF − Capex) explicitly marked as derived, so the two are not quoted as one metric.
+- SEC income statements now name non-operating income/expense, pretax income and income tax, so the gap between operating and net income is read from the filing instead of reverse-engineered from an assumed tax rate.
+- SEC income statements now carry segment revenue read from the latest 10-Q/10-K's XBRL instance, preferring the segment total over product-axis sub-lines. A segment fetch failure is a note, not a lost statement.
+- Reddit posts carry score and comment counts when `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` are configured; the keyless RSS path still works and says counts are absent.
+- The News analyst can verify a price move with the market snapshot, and the Sentiment analyst receives that snapshot to check numbers quoted in social posts.
+- A Hold no longer prints "Entry Price: not provided"; it says that a Hold places no new entry.
+
 ## [0.7.1] — 2026-10-27
 
 Decisions are scored only on final closes and settle across long market holidays, a model's unpadded date no longer reads filings made after the run date, and fixes to portfolios, prices, SEC statements, reports, Azure and Claude settings.

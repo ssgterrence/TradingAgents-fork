@@ -544,4 +544,6 @@ def test_the_trader_names_the_levels_it_did_not_give():
     rendered = render_trader_proposal(TraderProposal(action=TraderAction.HOLD, reasoning="r"))
     for field in ("Entry Price", "Stop Loss", "Position Sizing"):
         assert field in rendered
-    assert rendered.lower().count("not provided") == 3
+    # A Hold places no new entry: say N/A there, not "missing".
+    assert "**Entry Price**: N/A (Hold places no new entry" in rendered
+    assert rendered.lower().count("not provided") == 2

@@ -201,11 +201,18 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
         f"**Reasoning**: {proposal.reasoning}",
     ]
     # Named even when absent, so a reader can tell a level the trader chose not
-    # to give from one the schema never asked for.
+    # to give from one the schema never asked for. A Hold places no new entry,
+    # so "not provided" there would read as a gap rather than as "not applicable".
     for label, value in (("Entry Price", proposal.entry_price),
                          ("Stop Loss", proposal.stop_loss),
                          ("Position Sizing", proposal.position_sizing)):
-        parts.extend(["", f"**{label}**: {value if value is not None and value != '' else 'not provided'}"])
+        if value is not None and value != "":
+            shown = value
+        elif label == "Entry Price" and proposal.action.value == "Hold":
+            shown = "N/A (Hold places no new entry; an existing position stays as is)"
+        else:
+            shown = "not provided"
+        parts.extend(["", f"**{label}**: {shown}"])
     parts.extend([
         "",
         f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",

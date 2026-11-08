@@ -33,6 +33,18 @@ def test_percent_fields_carry_their_unit_and_fractions_are_unchanged():
 
 
 @pytest.mark.unit
+def test_vendor_free_cash_flow_is_named_as_a_vendor_computation():
+    # The vendor's TTM figure can differ from OCF - Capex in the filed
+    # statements (finance leases, a different window). Label it so a report
+    # does not present the two as the same metric.
+    out = _fundamentals({"longName": "Alphabet Inc.", "freeCashflow": -1_162_499_968})
+
+    assert "Free Cash Flow (vendor-computed TTM; may differ from statement OCF - Capex):" in out
+    assert "Free-cash-flow note:" in out
+    assert "name the source and the window" in out
+
+
+@pytest.mark.unit
 def test_an_absent_percent_field_is_left_out():
     out = _fundamentals({"longName": "JPMorgan Chase & Co.", "profitMargins": 0.35})
 
