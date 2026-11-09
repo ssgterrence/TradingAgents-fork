@@ -65,6 +65,22 @@ def test_a_us_filer_resolves_to_its_cik():
 
 
 @pytest.mark.unit
+def test_a_stale_ticker_map_is_refetched_before_calling_a_filer_non_us(monkeypatch):
+    calls = []
+    stale = {"0": {"cik_str": 1, "ticker": "OLD"}}
+    fresh = {"0": {"cik_str": 320193, "ticker": "AAPL"}}
+
+    def fake_cached(url, name, refresh=False):
+        calls.append(refresh)
+        return fresh if refresh else stale
+
+    monkeypatch.setattr(sec_edgar, "_cached_json", fake_cached)
+
+    assert sec_edgar.cik_for("AAPL") == "0000320193"
+    assert calls == [False, True]
+
+
+@pytest.mark.unit
 def test_a_non_filer_is_reported_as_such_not_as_missing_data():
     with pytest.raises(NoMarketDataError, match="not a US SEC filer"):
         sec_edgar.get_balance_sheet("0700.HK", "annual", "2026-01-01")
@@ -127,6 +143,33 @@ def test_company_facts_are_fetched_once_per_company_not_once_per_date(tmp_path, 
     for date in ("2024-11-15", "2025-01-15", "2025-06-15"):
         sec_edgar.get_balance_sheet("AAPL", "annual", date)
     assert len([u for u in calls if "companyfacts" in u]) == 1
+
+
+@pytest.mark.unit
+def test_a_document_larger_than_the_cap_is_refused_before_it_is_parsed(monkeypatch):
+    from tradingagents.dataflows.errors import VendorUnavailableError
+
+    class FakeResponse:
+        encoding = "utf-8"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, chunk_size):
+            yield b"x" * 100
+            yield b"y" * 100
+
+    monkeypatch.setattr(sec_edgar, "_XBRL_INSTANCE_MAX_BYTES", 150)
+    monkeypatch.setattr(sec_edgar.requests, "get", lambda *a, **k: FakeResponse())
+
+    with pytest.raises(VendorUnavailableError, match="exceeded 150 bytes"):
+        sec_edgar._fetch_text("https://example.test/instance.xml")
 
 
 @pytest.mark.unit
@@ -418,6 +461,22 @@ def test_a_derived_ttm_free_cash_flow_is_shown_and_labelled_derived(monkeypatch)
 
 
 @pytest.mark.unit
+def test_the_segment_filing_matches_the_statement_frequency(monkeypatch):
+    submissions = {"filings": {"recent": {
+        "form": ["10-Q", "10-K"],
+        "accessionNumber": ["0000320193-26-000123", "0000320193-26-000001"],
+        "filingDate": ["2026-10-29", "2026-02-05"],
+    }}}
+    monkeypatch.setattr(sec_edgar, "_fetch_json", lambda url: submissions)
+
+    quarterly = sec_edgar._latest_filing("0000320193", "2026-11-08", ("10-Q", "10-Q/A"))
+    annual = sec_edgar._latest_filing("0000320193", "2026-11-08", ("10-K", "10-K/A"))
+
+    assert quarterly["form"] == "10-Q"
+    assert annual["form"] == "10-K"
+
+
+@pytest.mark.unit
 def test_segment_revenue_is_read_from_the_latest_filings_xbrl_instance(monkeypatch):
     """Segment revenue is a dimensional fact; companyfacts does not carry it.
     The latest 10-Q's instance does, so read the segment axis there."""
@@ -515,6 +574,22 @@ def test_a_segment_fetch_failure_is_a_note_not_a_lost_statement(monkeypatch):
 
     assert "81300" in out
     assert "Segment revenue: not available this run" in out
+
+
+@pytest.mark.unit
+def test_ttm_matches_a_52_53_week_prior_year_within_a_few_days():
+    values = {("2025-09-24", 2): 100_000_000, ("2026-09-30", 2): 130_000_000}
+    annual = {("2025-12-31", 0): 200_000_000}
+
+    assert sec_edgar._ttm_for(values, annual) == ("2026-09-30", 230_000_000)
+
+
+@pytest.mark.unit
+def test_ttm_does_not_subtract_a_period_more_than_ten_days_off():
+    values = {("2025-09-01", 2): 100, ("2026-09-30", 2): 130}
+    annual = {("2025-12-31", 0): 200}
+
+    assert sec_edgar._ttm_for(values, annual) is None
 
 
 @pytest.mark.unit

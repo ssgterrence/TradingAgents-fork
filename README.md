@@ -309,6 +309,8 @@ See `tradingagents/default_config.py` for all configuration options.
 
 ### Fundamentals as filed
 
+Each data category reads an ordered vendor chain from `data_vendors` (for example `"sec_edgar,yfinance"`). A category with one vendor has no fallback: that vendor's outage removes the data for the run, and the router logs a warning at start-up. Add a second vendor, in order, when a category matters to your decisions.
+
 US company statements come from SEC EDGAR, which records the date every figure was filed. A run dated in the past reads the statements exactly as they stood that day: a fiscal year that has ended but has not been filed yet is not served, and a figure restated later still reads as first reported. Apple's 2008 total assets were filed as $39.6B and restated to $36.2B in 2010, so a run dated in between reads $39.6B. EDGAR needs no account or API key.
 
 Other companies' statements come from Yahoo Finance, which dates a statement by the period it covers rather than by when it was published. A run dated today reads them; a run dated in the past is told they are withheld, since Yahoo cannot say which figures were public by then.
@@ -322,6 +324,28 @@ SEC_EDGAR_USER_AGENT="Your Name your@email.com"
 ```
 
 It covers companies that file with the SEC, including foreign companies listed in the US. Anything else, such as Hong Kong or A-share listings, falls through to the next vendor in the chain. EDGAR's machine-readable filings begin in 2009, and a fourth quarter is reported as unavailable rather than derived, because filers publish it only inside the annual figure.
+
+### Data quality and derived figures
+
+A report starts with a **Data Quality** note when a data-vendor call failed or needed a fallback. It names the tool, the vendor that served it and the failed vendor/error. A clean run has no such section. Read it as the reason a section is thin, not as evidence about the company: a missing row never means "no news" or "no data exists".
+
+Two figures are derived rather than filed, and are labelled as such in the tool output:
+
+- **TTM free cash flow** on a cash-flow statement is Operating Cash Flow minus Capital Expenditure over the trailing twelve months (last fiscal year + current year to date − the same span a year earlier). No filing states it, so its definition and window are printed beside it. Yahoo's `freeCashflow` field is a vendor-computed TTM with its own definition and is labelled separately; do not treat the two as one number.
+- **Segment revenue** is read from the latest 10-Q/10-K's XBRL instance (the segment axis), preferring the segment total over product-axis sub-lines such as "Google Search & other". It is best-effort: a filer using a custom revenue tag, or a non-US filing, may not expose it, and the statement says so instead of inventing a number.
+
+### Multi-horizon recommendation
+
+The Portfolio Manager reports one call per horizon — **Short (days-weeks)**, **Mid (weeks-months)** and **Long (quarters-years)** — each a Buy/Hold/Sell with its own thesis, confidence, triggers and invalidation. The report header names them (`Horizon views: Short Sell · Mid Hold · Long Hold`) and states the `primary horizon` the overall `Rating` follows.
+
+Each trigger carries a status:
+
+- `active` — the condition is met now and supports the stance
+- `pending` — the level/event to watch, not yet met
+- `invalidated` — the evidence now contradicts it
+- `expired` — its window has passed
+
+A short-term drop does not change the long-term view. A long-term Sell requires an active long-term trigger — a 200SMA slope/price break, a fundamental FCF/ROIC regime break, or a structural event — and a deterministic guard verifies price and 200SMA/50-200 triggers against the market data, downgrading a long-term Sell to Hold when only short-term price evidence supports it. The overall rating and the memory/backtest score follow the primary horizon, not every horizon.
 
 ### Current holdings
 

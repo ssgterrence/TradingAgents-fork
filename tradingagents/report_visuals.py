@@ -131,13 +131,16 @@ def last_number(text) -> float | None:
     return _parse_number(matches[-1]) if matches else None
 
 
-def _table_matching(text: str, *groups) -> Table | None:
+def _table_matching(text: str, *groups, reject=None) -> Table | None:
     """The first table whose header has one alias from every group.
 
     A group is a tuple of alternatives, e.g. ``("revenue", "营收")``, so the
-    same extractor works for English and Chinese reports.
+    same extractor works for English and Chinese reports. ``reject`` is an
+    optional predicate that skips tables another extractor already owns.
     """
     for table in tables(text):
+        if reject is not None and reject(table):
+            continue
         header = " ".join(table.header).lower()
         if all(any(alias.lower() in header for alias in group) for group in groups):
             return table
@@ -157,8 +160,15 @@ def _signal(text: str) -> str:
     low = str(text).lower()
     if any(word in low for word in ("watch", "risk", "elevated", "expensive",
                                     "overhang", "compression", "mixed", "marginal",
-                                    "关注", "风险", "高估", "分歧", "混合", "承压")):
+                                    "关注", "风险", "高估", "分歧", "混合", "承压",
+                                    "中性", "超卖", "极端延伸")):
         return "watch"
+    # Chinese tables often use a bare 空 / 多 for the direction.
+    tokens = set(re.split(r"[^0-9a-z\u4e00-\u9fff]+", low))
+    if "空" in tokens or "偏空" in low:
+        return "down"
+    if "多" in tokens or "偏多" in low:
+        return "up"
     if any(word in low for word in ("bearish", "negative", "below", "down",
                                     "rolling over", "falling", "deteriorat",
                                     "weak", "soft", "看空", "负面", "下行", "恶化",
@@ -699,13 +709,23 @@ def market_summary(text: str, chart_data: dict) -> str:
     if regime:
         blocks.append(pills(regime))
 
+    # A Chinese report often closes with a dimension/reading/direction table.
+    regime_table = _table_matching(text, ("维度", "dimension"), ("读数", "reading", "事实"))
+
+    def _is_regime(table) -> bool:
+        return _column(table, "维度", "dimension") is not None
+
     # The eight-indicator table is the best single view of the market section.
-    table = _table_matching(text, ("indicator", "指标"), ("signal", "方向", "当前值", "为何"))
+    # Reject the dimension table above so it is not scored twice with blank
+    # value/why columns (its headers are "指标 / 数据", "读数", "信号方向").
+    table = _table_matching(text, ("indicator", "指标"),
+                            ("signal", "信号", "方向", "当前值", "为何"),
+                            reject=_is_regime)
     if table is not None:
         name = _column(table, "indicator", "指标")
-        value = _column(table, "value", "当前值", "数值")
-        signal = _column(table, "signal", "方向")
-        why = _column(table, "why", "为何", "含义")
+        value = _column(table, "value", "当前值", "数值", "读数", "data")
+        signal = _column(table, "signal", "方向", "信号")
+        why = _column(table, "why", "为何", "含义", "说明", "note")
         rows = []
         for row in table.rows:
             label = _indicator_label(table.cell(row, name))
@@ -724,6 +744,8 @@ def market_summary(text: str, chart_data: dict) -> str:
         read_col = _column(regime_table, "读数", "reading", "事实")
         direction_col = _column(regime_table, "方向", "direction")
         weight_col = _column(regime_table, "权重", "weight")
+        note_col = _column(regime_table, "说明", "note", "why")
+        note_col = weight_col if weight_col is not None else note_col
         rows, trend_pills = [], []
         for row in regime_table.rows:
             label = _inline_plain(regime_table.cell(row, label_col))
@@ -731,7 +753,7 @@ def market_summary(text: str, chart_data: dict) -> str:
                 continue
             direction = _inline_plain(regime_table.cell(row, direction_col))
             rows.append((label, _inline_plain(regime_table.cell(row, read_col)),
-                         direction, _inline_plain(regime_table.cell(row, weight_col))[:70]))
+                         direction, _inline_plain(regime_table.cell(row, note_col))[:70]))
             if any(word in label for word in ("长期", "中期", "短期", "long-term",
                                               "medium-term", "short-term")):
                 trend_pills.append((f"{label} · {direction}", _signal(direction)))

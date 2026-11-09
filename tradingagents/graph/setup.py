@@ -107,7 +107,8 @@ class GraphSetup:
         self.max_tool_rounds = max_tool_rounds
 
     def setup_graph(
-        self, selected_analysts=("market", "social", "news", "fundamentals"), memory_node=None
+        self, selected_analysts=("market", "social", "news", "fundamentals"), memory_node=None,
+        horizon_node=None,
     ):
         """Set up and compile the agent workflow graph.
 
@@ -119,6 +120,9 @@ class GraphSetup:
                 - "fundamentals": Fundamentals analyst
             memory_node: Node that settles past decisions and returns the run's
                 ``past_context``. It runs alongside the analysts.
+            horizon_node: Deterministic node that computes ``horizon_facts`` for
+                the Portfolio Manager's multi-horizon views. It also runs
+                alongside the analysts; only the Portfolio Manager reads it.
         """
         plan = build_analyst_execution_plan(selected_analysts)
 
@@ -161,6 +165,9 @@ class GraphSetup:
         if memory_node is not None:
             workflow.add_node("Memory Log", memory_node)
             first_steps.append("Memory Log")
+        if horizon_node is not None:
+            workflow.add_node("Horizon Evidence", horizon_node)
+            first_steps.append("Horizon Evidence")
         for node in first_steps:
             workflow.add_edge(START, node)
         workflow.add_edge(first_steps, "Bull Researcher")

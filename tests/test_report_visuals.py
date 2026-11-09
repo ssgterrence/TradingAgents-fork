@@ -64,6 +64,25 @@ def test_a_market_scorecard_is_built_from_the_indicator_table():
 
 
 @pytest.mark.unit
+def test_a_dimension_table_is_not_rendered_as_a_blank_indicator_card():
+    text = (
+        "## 10. Summary\n\n"
+        "| 维度 | 指标 / 数据 | 读数（2026-11-09） | 信号方向 | 说明与依据 |\n"
+        "|---|---|---:|---|---|\n"
+        "| 短期趋势 | close_10_ema | 197.149（价格低 8.87%） | 空 | 10EMA 陡降 |\n"
+        "| 中期趋势 | close_50_sma | 219.020（价格低 17.97%） | 空 | 与 200SMA 价差收窄 |\n"
+        "| 动量 | rsi | 27.7831 | 超卖 / 弱正背离 | 待第三根 K 线确认 |\n"
+    )
+    html = visuals.market_summary(text, {})
+    assert html.count('class="scorecard"') == 1
+    assert "197.149" in html and "219.020" in html
+    assert "10EMA 陡降" in html and "待第三根 K 线确认" in html
+    assert '<span class="score-value"></span>' not in html
+    assert '<span class="score-note"></span>' not in html
+    assert 'class="score-signal down">空' in html
+
+
+@pytest.mark.unit
 def test_a_fundamentals_table_becomes_a_chart():
     text = (
         "## 4. Growth\n\n"

@@ -221,6 +221,112 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Multi-horizon views (Portfolio Manager)
+# ---------------------------------------------------------------------------
+
+
+class Horizon(StrEnum):
+    """A view's time horizon; the overall rating follows ``primary_horizon``."""
+
+    SHORT = "short"
+    MID = "mid"
+    LONG = "long"
+
+
+class HorizonStance(StrEnum):
+    """Direction within one horizon. Three tiers keep each horizon readable."""
+
+    BUY = "Buy"
+    HOLD = "Hold"
+    SELL = "Sell"
+
+
+class TriggerDirection(StrEnum):
+    """A trigger is a condition that would justify a Buy or a Sell."""
+
+    BUY = "Buy"
+    SELL = "Sell"
+
+
+class TriggerKind(StrEnum):
+    """What sort of evidence a trigger is, so short-term price is told from long-term trend."""
+
+    PRICE = "price"
+    TREND = "trend"
+    FUNDAMENTAL = "fundamental"
+    EVENT = "event"
+    SENTIMENT = "sentiment"
+
+
+class TriggerStatus(StrEnum):
+    """Whether a trigger is satisfied now, or only a level to watch."""
+
+    ACTIVE = "active"
+    PENDING = "pending"
+    INVALIDATED = "invalidated"
+    EXPIRED = "expired"
+
+
+class EvidenceSource(StrEnum):
+    """Which analyst report the trigger's evidence came from."""
+
+    MARKET = "market"
+    FUNDAMENTALS = "fundamentals"
+    NEWS = "news"
+    SENTIMENT = "sentiment"
+    RISK_DEBATE = "risk_debate"
+    LESSON = "lesson"
+
+
+class HorizonTrigger(BaseModel):
+    """One condition that supports (or, if invalidated, fails to support) a view.
+
+    ``price_condition`` + ``level`` let the policy verify a price trigger against
+    the latest close, so a model cannot call a not-yet-reached level "active".
+    """
+
+    horizon: Horizon
+    direction: TriggerDirection
+    kind: TriggerKind
+    source: EvidenceSource
+    condition: str
+    price_condition: Literal["above", "below"] | None = None
+    level: float | None = None
+    status: TriggerStatus
+    status_reason: str | None = None
+    evidence: str
+    invalid_if: str | None = None
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def _coerce_level(cls, value):
+        return _coerce_optional_float(value)
+
+
+class HorizonView(BaseModel):
+    """The call for one horizon, plus the triggers that back it and what breaks it."""
+
+    stance: HorizonStance
+    confidence: Literal["low", "medium", "high"]
+    thesis: str
+    triggers: list[HorizonTrigger] = Field(default_factory=list, max_length=3)
+    invalidation: str
+    time_window: str
+
+
+def _default_horizon_view() -> HorizonView:
+    """A neutral view for runs/models that do not fill the horizon layer."""
+    return HorizonView(
+        stance=HorizonStance.HOLD,
+        confidence="low",
+        thesis="",
+        triggers=[],
+        invalidation="",
+        time_window="",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Portfolio Manager
 # ---------------------------------------------------------------------------
 
@@ -265,11 +371,90 @@ class PortfolioDecision(BaseModel):
         default=None,
         description="Optional recommended holding period, e.g. '3-6 months'.",
     )
+    primary_horizon: Horizon = Field(
+        default=Horizon.MID,
+        description=(
+            "Which horizon the overall `rating` follows. Exactly one of short / mid / long. "
+            "Default to mid for a general investor; use short only for a trading mandate. "
+            "The `rating` must be directionally consistent with that horizon's stance."
+        ),
+    )
+    short_term: HorizonView = Field(
+        default_factory=_default_horizon_view,
+        description=(
+            "Short-term view (days to weeks). Price action, 10EMA/VWMA, RSI, ATR, volume and "
+            "near-term events decide it. A short-term Sell does NOT change the mid/long view."
+        ),
+    )
+    mid_term: HorizonView = Field(
+        default_factory=_default_horizon_view,
+        description=(
+            "Mid-term view (weeks to months). 50SMA, earnings/capex trends, sector rotation and "
+            "1-6 month events decide it."
+        ),
+    )
+    long_term: HorizonView = Field(
+        default_factory=_default_horizon_view,
+        description=(
+            "Long-term view (quarters to years). 200SMA slope and price position, revenue/FCF/ROIC "
+            "regime, and structural/competitive changes decide it. A long-term Sell requires an "
+            "active long-term trend/fundamental/event trigger; short-term price evidence is not enough."
+        ),
+    )
+    horizon_note: str | None = Field(
+        default=None,
+        description=(
+            "Explain any divergence between the horizons (e.g. short-term Sell while long-term "
+            "Hold), and why one horizon's call does not override another without its own trigger."
+        ),
+    )
 
     @field_validator("price_target", mode="before")
     @classmethod
     def _nullish_float_to_none(cls, v):
         return _coerce_optional_float(v)
+
+
+_HORIZON_LABELS = {
+    "short": "Short (days-weeks)",
+    "mid": "Mid (weeks-months)",
+    "long": "Long (quarters-years)",
+}
+
+
+def _horizon_table(decision: PortfolioDecision) -> str:
+    rows = []
+    for key in ("short", "mid", "long"):
+        view = getattr(decision, f"{key}_term")
+        rows.append(
+            f"| {_HORIZON_LABELS[key]} | {view.stance.value} | "
+            f"{view.confidence.capitalize()} | {view.time_window or '—'} | {view.thesis or '—'} |"
+        )
+    return "\n".join([
+        "| Horizon | Stance | Confidence | Time Window | Thesis |",
+        "|---|---|---|---|---|",
+        *rows,
+    ])
+
+
+def _trigger_table(decision: PortfolioDecision) -> str:
+    rows = []
+    for key in ("short", "mid", "long"):
+        for trigger in getattr(decision, f"{key}_term").triggers:
+            status = trigger.status.value
+            if trigger.status_reason:
+                status += f" ({trigger.status_reason})"
+            condition = trigger.condition or "—"
+            if trigger.level is not None:
+                condition += f" @ {trigger.level}"
+            rows.append(
+                f"| {key} | {trigger.direction.value} | {condition} | "
+                f"{status} | {trigger.evidence or '—'} |"
+            )
+    header = "| Horizon | Direction | Trigger | Status | Evidence |\n|---|---|---|---|---|"
+    if not rows:
+        rows = ["| — | — | no triggers | — | — |"]
+    return "\n".join([header, *rows])
 
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
@@ -286,7 +471,17 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
         f"**Executive Summary**: {decision.executive_summary}",
         "",
         f"**Investment Thesis**: {decision.investment_thesis}",
+        "",
+        "**Horizon Views**",
+        "",
+        _horizon_table(decision),
+        "",
+        "**Triggers**",
+        "",
+        _trigger_table(decision),
     ]
+    if decision.horizon_note:
+        parts += ["", "**Horizon Divergence**", "", decision.horizon_note]
     # Named even when absent: a missing line reads as a field nobody asked for,
     # so a reader cannot tell "no target" from "target not reported".
     target = decision.price_target if decision.price_target is not None else "not provided"

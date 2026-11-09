@@ -9,6 +9,7 @@ from typing import Any
 
 import tradingagents
 from tradingagents.agents.context import build_instrument_context, resolve_instrument_identity
+from tradingagents.agents.horizon import build_horizon_evidence
 from tradingagents.agents.rating import run_rating
 from tradingagents.dataflows import quality
 from tradingagents.dataflows.config import run_config, run_config_context, set_config
@@ -118,7 +119,9 @@ class TradingAgentsGraph:
         self.selected_analysts = tuple(selected_analysts)
 
         # Set up the graph: keep the workflow for recompilation with a checkpointer.
-        self.workflow = self.graph_setup.setup_graph(selected_analysts, memory_node=self._memory_step)
+        self.workflow = self.graph_setup.setup_graph(
+            selected_analysts, memory_node=self._memory_step, horizon_node=self._horizon_step,
+        )
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
         self._resuming = False
@@ -343,6 +346,20 @@ class TradingAgentsGraph:
             past_context = ""
             note = note or f"The memory log could not be read this run ({type(exc).__name__})."
         return {"past_context": past_context, "memory_note": note}
+
+    def _horizon_step(self, state):
+        """The deterministic Horizon Evidence step, alongside the analysts.
+
+        Computes the price/trend facts the Portfolio Manager's multi-horizon
+        views are validated against. No LLM, one cached price load, and a
+        failure here leaves ``horizon_facts`` None so the policy skips instead
+        of guessing. Only the Portfolio Manager reads the result.
+        """
+        return {
+            "horizon_facts": build_horizon_evidence(
+                state["company_of_interest"], state["trade_date"]
+            )
+        }
 
     def settle_pending(self, company_name) -> settlement.Settlement:
         """Settle this ticker's decisions whose holding window has now traded.

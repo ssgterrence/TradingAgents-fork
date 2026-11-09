@@ -19,6 +19,15 @@ Changes that need action when upgrading are listed under "Upgrading from" in the
 - Reddit posts carry score and comment counts when `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` are configured; the keyless RSS path still works and says counts are absent.
 - The News analyst can verify a price move with the market snapshot, and the Sentiment analyst receives that snapshot to check numbers quoted in social posts.
 - A Hold no longer prints "Entry Price: not provided"; it says that a Hold places no new entry.
+- Structured-output calls get one corrective retry with the same schema before falling back to free text, so an intermittent malformed answer does not silently lose the typed rating.
+- The segment table follows the statement it accompanies: a quarterly income statement reads a 10-Q and an annual one a 10-K, instead of repeating a quarterly breakdown beside annual figures.
+- TTM cash flow matches the prior-year span within 10 days, so a 52/53-week filer's year-to-date figure is not dropped.
+- A stale or incomplete SEC ticker map is refetched once before a US filer is reported as non-US, and an SEC document larger than the cap is refused while streaming rather than after it is loaded.
+- A failed verified-market snapshot is named in the Data Quality note.
+- CI excludes the vendored agent skills from lint, pins the ruff minor series, and checks that `uv.lock` matches `pyproject.toml`.
+- README documents the Data Quality note, derived TTM free cash flow, segment coverage and vendor chains.
+- The Portfolio Manager now separates a **short / mid / long** view, each with its own Buy/Hold/Sell, triggers (active / pending / invalidated / expired) and invalidation, plus a `primary_horizon` naming which one the overall rating follows.
+- A deterministic guard verifies price/trend triggers against the market facts and downgrades a long-term Sell to Hold when only short-term price evidence supports it, so a short-term drop cannot become a long-term call without a long-term trigger.
 
 ## [0.7.1] — 2026-10-27
 

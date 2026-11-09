@@ -26,6 +26,15 @@ def _header(ticker: str, final_state: dict, settings: dict | None) -> str:
         lines.append(f"- Analysis date: {final_state['trade_date']}")
     if final_state.get("final_trade_decision"):
         lines.append(f"- Rating: {run_rating(final_state)}")
+    views = final_state.get("horizon_views") or {}
+    if views:
+        order = [key for key in ("short", "mid", "long") if key in views]
+        if order:
+            label = " · ".join(f"{key.capitalize()} {views[key]}" for key in order)
+            primary = final_state.get("primary_horizon")
+            lines.append(
+                f"- Horizon views: {label}" + (f" (primary: {primary})" if primary else "")
+            )
     lines.append(f"- Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if settings:
         s = settings.get

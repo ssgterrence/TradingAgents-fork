@@ -145,9 +145,9 @@ def _fetch_json(url: str) -> dict:
         raise VendorUnavailableError("SEC EDGAR returned an unreadable response") from exc
 
 
-def _cached_json(url: str, name: str) -> dict:
+def _cached_json(url: str, name: str, refresh: bool = False) -> dict:
     path = Path(get_config()["data_cache_dir"]) / "sec_edgar" / name
-    if path.exists() and time.time() - path.stat().st_mtime < _CACHE_TTL_SECONDS:
+    if not refresh and path.exists() and time.time() - path.stat().st_mtime < _CACHE_TTL_SECONDS:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except ValueError:
@@ -161,16 +161,28 @@ def _cached_json(url: str, name: str) -> dict:
 def _fetch_text(url: str) -> str:
     """Read a public EDGAR text/XML document, respecting SEC's identification rule."""
     try:
-        response = requests.get(url, headers={"User-Agent": _user_agent()}, timeout=30)
-        response.raise_for_status()
+        with requests.get(
+            url, headers={"User-Agent": _user_agent()}, timeout=30, stream=True,
+        ) as response:
+            response.raise_for_status()
+            chunks = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=65536):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > _XBRL_INSTANCE_MAX_BYTES:
+                    raise VendorUnavailableError(
+                        f"SEC EDGAR document exceeded {_XBRL_INSTANCE_MAX_BYTES} bytes; "
+                        "refusing to parse"
+                    )
+                chunks.append(chunk)
+            return b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
+    except VendorUnavailableError:
+        raise
     except requests.RequestException as exc:
         status = getattr(getattr(exc, "response", None), "status_code", None)
         raise VendorUnavailableError(f"SEC EDGAR request failed ({status or type(exc).__name__})") from exc
-    if len(response.content) > _XBRL_INSTANCE_MAX_BYTES:
-        raise VendorUnavailableError(
-            f"SEC EDGAR document exceeded {_XBRL_INSTANCE_MAX_BYTES} bytes; refusing to parse"
-        )
-    return response.text
 
 
 def _cached_text(url: str, name: str) -> str:
@@ -186,14 +198,23 @@ def _cached_text(url: str, name: str) -> str:
     return data
 
 
-def cik_for(ticker: str) -> str | None:
-    """The filer's CIK, or None when the ticker is not a US filer."""
-    table = _cached_json(_TICKERS_URL, "company_tickers.json")
-    wanted = ticker.strip().upper()
+def _cik_in(table: dict, wanted: str) -> str | None:
     for entry in table.values():
         if entry.get("ticker", "").upper() == wanted:
             return f"{int(entry['cik_str']):010d}"
     return None
+
+
+def cik_for(ticker: str) -> str | None:
+    """The filer's CIK, or None when the ticker is not a US filer."""
+    wanted = ticker.strip().upper()
+    table = _cached_json(_TICKERS_URL, "company_tickers.json")
+    found = _cik_in(table, wanted)
+    if found is not None:
+        return found
+    # A stale or test-polluted cache must not make a US filer look non-US.
+    # SEC's ticker map changes slowly, so one refresh per miss is enough.
+    return _cik_in(_cached_json(_TICKERS_URL, "company_tickers.json", refresh=True), wanted)
 
 
 def _span_index(fact: dict, spans: tuple[tuple[int, int], ...]) -> int | None:
@@ -252,17 +273,30 @@ def _humanize_member(name: str) -> str:
     return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name).strip() or name
 
 
-def _latest_filing(cik: str, as_of_date: str) -> dict | None:
-    """The newest 10-Q/10-K filed on or before ``as_of_date``, or None."""
+def _latest_filing(
+    cik: str,
+    as_of_date: str,
+    preferred: tuple[str, ...] = ("10-Q", "10-Q/A"),
+) -> dict | None:
+    """The newest 10-Q/10-K filed on or before ``as_of_date``, or None.
+
+    ``preferred`` chooses the form that matches the statement's frequency (a
+    quarterly income statement should read a 10-Q, an annual one a 10-K), so
+    the segment table does not repeat a quarterly breakdown beside annual
+    figures. When no preferred form is on file, the newest of either is used.
+    """
     submissions = _cached_json(_SUBMISSIONS_URL.format(cik=cik), f"submissions-{cik}.json")
     recent = (submissions.get("filings") or {}).get("recent") or {}
     forms = recent.get("form") or []
     accessions = recent.get("accessionNumber") or []
     filed_dates = recent.get("filingDate") or []
+    candidates = []
     for form, accession, filed in zip(forms, accessions, filed_dates, strict=False):
         if form in ("10-Q", "10-K", "10-Q/A", "10-K/A") and filed <= as_of_date:
-            return {"form": form, "accession": accession, "filed": filed}
-    return None
+            candidates.append({"form": form, "accession": accession, "filed": filed})
+    if not candidates:
+        return None
+    return next((filing for filing in candidates if filing["form"] in preferred), candidates[0])
 
 
 def _segment_instance_url(cik: str, accession: str) -> str | None:
@@ -446,7 +480,8 @@ def _statement(kind: str, ticker: str, freq: str, as_of_date: str, title: str) -
     segments = ""
     if kind == "income_statement":
         try:
-            filing = _latest_filing(cik, as_of_date)
+            preferred = (("10-Q", "10-Q/A") if quarterly else ("10-K", "10-K/A"))
+            filing = _latest_filing(cik, as_of_date, preferred)
             if filing:
                 segments = _segment_revenue(cik, as_of_date, filing)
         except (VendorUnavailableError, ET.ParseError, ValueError) as exc:
@@ -480,15 +515,25 @@ def _ttm_for(values: dict, annual_values: dict) -> tuple[str, float] | None:
             return None
         return picked[0], sum(values[(period, 0)] for period in picked)
 
+    end_date = date.fromisoformat(end)
     try:
-        prior_end = date.fromisoformat(end).replace(year=date.fromisoformat(end).year - 1).isoformat()
-    except ValueError:
+        target = end_date.replace(year=end_date.year - 1)
+    except ValueError:  # 29 February in a non-leap prior year
+        target = date(end_date.year - 1, 12, 31)
+    # A 52/53-week filer's prior-year span can end a few days away from the
+    # calendar anniversary. Match the nearest same-span period within 10 days;
+    # a wider gap is a different period and must not be subtracted.
+    prior_key = min(
+        (key for key in values if key[1] == index),
+        key=lambda key: abs((date.fromisoformat(key[0]) - target).days),
+        default=None,
+    )
+    if prior_key is None or abs((date.fromisoformat(prior_key[0]) - target).days) > 10:
         return None
-    prior = values.get((prior_end, index))
     annual_period = max((period for period in annual_values if period[0] < end), default=None)
-    if prior is None or annual_period is None:
+    if annual_period is None:
         return None
-    return end, annual_values[annual_period] + values[(end, index)] - prior
+    return end, annual_values[annual_period] + values[(end, index)] - values[prior_key]
 
 
 def _derived_ttm_cashflow(us_gaap: dict, as_of_date: str, quarterly: bool) -> str:

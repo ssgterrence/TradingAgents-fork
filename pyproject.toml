@@ -32,7 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "ruff>=0.16",
+    "ruff>=0.17.4,<0.18",
     "pytest>=8.0",
     "pytest-subtests>=0.13",
 ]
@@ -70,7 +70,14 @@ filterwarnings = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["results"]
+extend-exclude = [
+    "results",
+    "build",
+    ".opencode",
+    ".agents",
+    ".pytest_cache",
+    ".ruff_cache",
+]
 
 [tool.ruff.lint]
 # Standard "good defaults" rule set (pyflakes + pycodestyle + isort + bugbear +

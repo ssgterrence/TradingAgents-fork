@@ -60,8 +60,26 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install ruff
-        run: pip install "ruff>=0.16"
+        # Pinned to the minor series the repository is clean under: a new ruff
+        # minor can add rules and turn an unrelated PR red.
+        run: pip install "ruff>=0.17.4,<0.18"
       - name: Lint the repository
         # The repo is fully clean under the strict select, so we lint everything
-        # (generated results/ is excluded via pyproject extend-exclude).
+        # (generated results/, build/ and the vendored agent skills are excluded
+        # via pyproject extend-exclude).
         run: ruff check .
+
+  lock:
+    name: uv lock is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check the committed lockfile
+        # pyproject.toml and uv.lock must agree: the CI install uses pip, so a
+        # drifted lock would otherwise never be noticed.
+        run: |
+          python -m pip install --upgrade pip uv
+          uv lock --check

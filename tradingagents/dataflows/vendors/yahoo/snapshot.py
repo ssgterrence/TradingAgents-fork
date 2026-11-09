@@ -64,6 +64,77 @@ def _fmt(value) -> str:
     return str(value)
 
 
+def _num(value):
+    """A numeric value or None, so a missing indicator is distinct from zero."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(number) else number
+
+
+def build_horizon_facts(symbol: str, as_of_date: str) -> dict:
+    """Deterministic facts for the Portfolio Manager's multi-horizon views.
+
+    The horizon layer must not let a short-term price drop be quoted as a
+    long-term trend break, so the PM is given the exact numbers the triggers
+    are validated against: close, moving averages, the 200SMA's recent slope,
+    the 50/200 relationship, RSI and ATR. Same source as the verified snapshot,
+    so the two never disagree.
+    """
+    df = _verified_rows(symbol, as_of_date)
+    stock_df = wrap(df.copy())
+
+    def indicator(name):
+        try:
+            stock_df[name]  # trigger stockstats to compute it
+            return _num(stock_df.iloc[-1][name])
+        except Exception:  # noqa: BLE001 — one missing indicator is not fatal
+            return None
+
+    close = _num(df.iloc[-1].get("Close"))
+    sma50 = indicator("close_50_sma")
+    sma200 = indicator("close_200_sma")
+
+    sma200_prev = None
+    try:
+        stock_df["close_200_sma"]
+        if len(stock_df) >= 21:
+            sma200_prev = _num(stock_df.iloc[-21]["close_200_sma"])
+    except Exception:  # noqa: BLE001
+        sma200_prev = None
+
+    slope = None
+    if sma200 is not None and sma200_prev:
+        slope = (sma200 - sma200_prev) / sma200_prev * 100.0
+
+    price_vs_sma200 = None
+    if close is not None and sma200:
+        price_vs_sma200 = (close - sma200) / sma200 * 100.0
+
+    atr = indicator("atr")
+    atr_pct = None
+    if atr is not None and close:
+        atr_pct = atr / close * 100.0
+
+    return {
+        "latest_date": str(df.iloc[-1]["Date"].date()) if hasattr(df.iloc[-1]["Date"], "date") else str(df.iloc[-1]["Date"]),
+        "close": close,
+        "ema10": indicator("close_10_ema"),
+        "sma50": sma50,
+        "sma200": sma200,
+        "sma200_prev_20d": sma200_prev,
+        "sma200_slope_20d_pct": slope,
+        "price_vs_sma200_pct": price_vs_sma200,
+        "rsi": indicator("rsi"),
+        "atr": atr,
+        "atr_pct": atr_pct,
+        "vwma": indicator("vwma"),
+    }
+
+
 def build_verified_market_snapshot(
     symbol: str,
     as_of_date: str,

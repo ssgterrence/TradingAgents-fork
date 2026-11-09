@@ -71,3 +71,6 @@ class AgentState(MessagesState):
     past_context: Annotated[str, "Memory log context for the Portfolio Manager (same-ticker decisions + cross-ticker lessons), written by the Memory Log step"]
     memory_note: Annotated[str, "What the Memory Log step could not settle or read this run, for the report; empty when all went well"]
     portfolio_context: Annotated[str, "Caller-supplied holdings and cash, rendered at run start; empty when not provided"]
+    horizon_facts: Annotated[dict | None, "Deterministic price/trend facts for the Portfolio Manager's horizon views; None when unavailable"]
+    horizon_views: Annotated[dict, "Short/mid/long stances from the Portfolio Manager, for the report header"]
+    primary_horizon: Annotated[str, "Which horizon the overall rating follows: short/mid/long"]

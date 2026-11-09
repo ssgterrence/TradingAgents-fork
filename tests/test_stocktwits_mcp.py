@@ -131,14 +131,14 @@ class TestMCPClient:
             calls.append(json.loads(body) if body else None)
             if len(calls) == 1:   # initialize
                 return 200, {"Mcp-Session-Id": "session-1"}, (
-                    'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\n\n'
-                ).encode()
+                    b'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\n\n'
+                )
             if len(calls) == 2:   # notifications/initialized
                 return 202, {}, b""
             return 200, {}, (
-                'event: message\ndata: {"jsonrpc":"2.0","id":2,'
-                '"result":{"content":[{"type":"text","text":"{\\"ok\\":true}"}]}}\n\n'
-            ).encode()
+                b'event: message\ndata: {"jsonrpc":"2.0","id":2,'
+                b'"result":{"content":[{"type":"text","text":"{\\"ok\\":true}"}]}}\n\n'
+            )
 
         with patch.object(stocktwits_mcp, "_request", fake_request):
             client = stocktwits_mcp._MCPClient("https://example.test/mcp", "token", 20.0)

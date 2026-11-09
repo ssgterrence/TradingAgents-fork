@@ -92,7 +92,10 @@ Resolved cells: 24 · pending: 6
 - SPY 本身不是“选股”，但能回答一个关键问题：系统是否比“直接持有指数”更好。
 - 注意 ETF 的基本面路径和普通公司不同，情绪/新闻也更偏宏观。
 
-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX 4. 具体推荐组合
+---
+
+4. 具体推荐组合
+
 ❌ 你举的例子里，不太推荐的
 
 - GOOGL + INTC：都偏科技/半导体，相关性高，多样性不足。可以做冒烟测试，不适合正式评估。

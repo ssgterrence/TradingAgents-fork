@@ -212,6 +212,41 @@ def test_invoke_structured_falls_back_when_result_is_none():
 
 
 @pytest.mark.unit
+def test_a_malformed_structured_answer_is_retried_once_with_a_correction():
+    from tradingagents.agents.structured import invoke_structured_or_freetext
+
+    structured = MagicMock()
+    structured.invoke.side_effect = [ValueError("bad JSON"), "TYPED"]
+    plain = MagicMock()
+
+    out = invoke_structured_or_freetext(
+        structured, plain, "prompt", render=lambda r: r, agent_name="t"
+    )
+
+    assert out == "TYPED"
+    assert structured.invoke.call_count == 2
+    retry_prompt = structured.invoke.call_args_list[1].args[0]
+    assert "did not match the required structured schema" in retry_prompt
+    plain.invoke.assert_not_called()
+
+
+@pytest.mark.unit
+def test_the_corrective_retry_appends_to_a_message_list():
+    from tradingagents.agents.structured import invoke_structured
+
+    structured = MagicMock()
+    structured.invoke.side_effect = [None, "TYPED"]
+    messages = [{"role": "user", "content": "decide"}]
+
+    assert invoke_structured(structured, messages, "t") == "TYPED"
+
+    retry_prompt = structured.invoke.call_args_list[1].args[0]
+    assert retry_prompt[0] == messages[0]
+    assert retry_prompt[-1]["role"] == "user"
+    assert "did not match the required structured schema" in retry_prompt[-1]["content"]
+
+
+@pytest.mark.unit
 class TestTraderAgent:
     def test_structured_path_produces_rendered_markdown(self):
         captured = {}
