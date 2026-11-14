@@ -461,6 +461,56 @@ def test_a_derived_ttm_free_cash_flow_is_shown_and_labelled_derived(monkeypatch)
 
 
 @pytest.mark.unit
+def test_a_latest_single_quarter_is_derived_from_year_to_date_filings(monkeypatch):
+    """A 10-Q cash flow is filed year to date. The single quarter is the latest
+    YTD figure minus the prior YTD figure; give it to the model so it cannot
+    subtract a different period and report the wrong cash conversion."""
+    def cf(value, start):
+        return _fact("2026-07-26", value, "2026-08-26", form="10-Q", fp="Q2", start=start)
+
+    facts = {"facts": {"us-gaap": {
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
+            _fact("2026-04-26", 50_344_000_000, "2026-05-27", form="10-Q", fp="Q1", start="2026-01-26"),
+            cf(74_421_000_000, "2026-01-26"),
+        ]}},
+        "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [
+            _fact("2026-04-26", 1_757_000_000, "2026-05-27", form="10-Q", fp="Q1", start="2026-01-26"),
+            cf(4_434_000_000, "2026-01-26"),
+        ]}},
+    }}}
+    monkeypatch.setattr(sec_edgar, "_fetch_json",
+                        lambda url: TICKER_MAP if "company_tickers" in url else facts)
+
+    out = sec_edgar.get_cashflow("AAPL", "quarterly", "2026-11-08")
+
+    assert "# Derived (not filed): latest single quarter" in out
+    assert "# Quarter ended: 2026-07-26" in out
+    assert "# Operating Cash Flow (single quarter): 24077" in out
+    assert "# Capital Expenditure (single quarter): 2677" in out
+    assert "# Free Cash Flow (single quarter): 21400" in out
+    assert "do not subtract a different period" in out
+
+
+@pytest.mark.unit
+def test_the_annual_income_statement_warns_that_eps_is_not_split_adjusted(monkeypatch):
+    facts = {"facts": {"us-gaap": {
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [
+            _fact("2025-12-31", 215_938_000_000, "2026-02-05", start="2025-01-01"),
+        ]}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": [
+            _fact("2025-12-31", 4.90, "2026-02-05", start="2025-01-01"),
+        ]}},
+    }}}
+    monkeypatch.setattr(sec_edgar, "_fetch_json",
+                        lambda url: TICKER_MAP if "company_tickers" in url else facts)
+
+    out = sec_edgar.get_income_statement("AAPL", "annual", "2026-03-01")
+
+    assert "Diluted EPS is as filed for each period" in out
+    assert "adjusting for splits" in out
+
+
+@pytest.mark.unit
 def test_the_segment_filing_matches_the_statement_frequency(monkeypatch):
     submissions = {"filings": {"recent": {
         "form": ["10-Q", "10-K"],

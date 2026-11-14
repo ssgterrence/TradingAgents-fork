@@ -10,6 +10,11 @@ Changes that need action when upgrading are listed under "Upgrading from" in the
 
 ### Fixed
 
+- The verified-market snapshot no longer treats an unfinished current-day bar as a close. A cash-market bar dated today is served only after the major sessions settle (22:30 UTC); a crypto bar waits for the UTC rollover. The snapshot says the intraday bar was excluded and uses the last completed session.
+- SEC cash-flow statements now also derive the **latest single quarter** from year-to-date filings (6M − 3M, 9M − 6M) and label it as derived, so Q2 operating cash flow and cash conversion are not computed by subtracting the wrong period.
+- The verification snapshot prints candle anatomy (body, upper shadow, lower shadow, close position) and states that the lower shadow is `min(Open, Close) - Low`, not `Close - Low`; the market analyst prompt repeats the definition and the settled-bar rule.
+- The fundamentals vendor note flags a Return on Equity field that is inconsistent with P/B ÷ P/E from the same fields, instead of letting the outlier become a capital-efficiency headline.
+- SEC annual income statements note that diluted EPS is as filed and may be pre-split, so historical EPS is not compared across a stock split without adjustment.
 - Company news no longer disappears when Yahoo's quote-feed news endpoint fails. The Search fallback now runs on an exception as well as on an empty feed, so a retired or blocked endpoint does not take `get_news` down for the run. yfinance is raised to 1.8.0, whose news request replaces the endpoint Yahoo retired.
 - A run records which vendor calls failed or needed a fallback and shows a **Data Quality** note in the report, so a thin section says why instead of leaving the reason unknown.
 - `get_earnings_calendar` separates the last reported date from the next scheduled one, adds `get_earnings_dates` where Yahoo serves it, and no longer presents a past date as an upcoming event.

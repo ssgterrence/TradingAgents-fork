@@ -81,10 +81,12 @@ def get_verified_market_snapshot(
 ) -> str:
     """Deterministic verification snapshot for exact market-data claims.
 
-    Returns the latest OHLCV row on or before curr_date, common technical
-    indicators, and recent closes. Call this before making exact claims about
-    price levels, Bollinger bands, RSI, MACD, moving averages, support /
-    resistance, or historical comparisons, and treat it as the source of truth.
+    Returns the latest settled OHLCV row on or before curr_date, common technical
+    indicators, candle anatomy, and recent closes. A current-day bar whose
+    session is still open is excluded; the previous completed session is used.
+    Call this before making exact claims about price levels, Bollinger bands,
+    RSI, MACD, moving averages, support / resistance, or historical comparisons,
+    and treat it as the source of truth.
     """
     # An exception out of a tool would end the run.
     try:

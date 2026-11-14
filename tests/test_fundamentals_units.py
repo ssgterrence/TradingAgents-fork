@@ -45,6 +45,22 @@ def test_vendor_free_cash_flow_is_named_as_a_vendor_computation():
 
 
 @pytest.mark.unit
+def test_roe_inconsistent_with_pb_and_pe_is_flagged():
+    """P/B / P/E is ROE. A vendor field that disagrees is a data-quality
+    problem, not a capital-efficiency headline."""
+    out = _fundamentals({
+        "longName": "NVIDIA Corporation",
+        "returnOnEquity": 1.17211,
+        "trailingPE": 22.718079,
+        "priceToBook": 18.9497,
+    })
+
+    assert "Valuation consistency note" in out
+    assert "117.21%" in out and "83.41%" in out
+    assert "Treat the ROE field as unverified" in out
+
+
+@pytest.mark.unit
 def test_an_absent_percent_field_is_left_out():
     out = _fundamentals({"longName": "JPMorgan Chase & Co.", "profitMargins": 0.35})
 

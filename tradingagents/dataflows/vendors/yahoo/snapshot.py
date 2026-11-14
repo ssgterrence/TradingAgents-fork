@@ -3,22 +3,31 @@
 The market analyst is an LLM that can confabulate exact numbers — citing a
 Bollinger band or a "historically validated bounce" that the underlying data
 doesn't support (#830). This module computes a ground-truth snapshot (latest
-OHLCV row on or before the analysis date, common indicators, recent closes)
-the analyst is told to treat as the source of truth for any exact numeric
-claim. Deterministic, no LLM involved.
+settled OHLCV row on or before the analysis date, common indicators, recent
+closes) the analyst is told to treat as the source of truth for any exact
+numeric claim. A daily bar is not a close just because the vendor published it;
+a current-day session that has not settled is excluded. Deterministic, no LLM
+involved.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import UTC, datetime, time
 
 import pandas as pd
 from stockstats import wrap
 
 from tradingagents.dataflows.errors import NoMarketDataError
-from tradingagents.dataflows.symbols import normalize_symbol
+from tradingagents.dataflows.symbols import crypto_base, normalize_symbol
 from tradingagents.dataflows.vendors.yahoo.common import price_text
 from tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv
+
+# A daily bar is not a close just because the vendor published it: Yahoo emits
+# a partial candle during the session. The last major cash session (US) closes
+# at 21:00 UTC in winter, and the FX day rolls at 22:00 UTC, so 22:30 UTC is
+# after both. Crypto has no cash close; its daily bar settles at 00:00 UTC.
+_SETTLED_AFTER_UTC = time(22, 30)
 
 # A fixed, common indicator set so the snapshot is the same shape every run.
 DEFAULT_SNAPSHOT_INDICATORS: tuple[str, ...] = (
@@ -28,12 +37,44 @@ DEFAULT_SNAPSHOT_INDICATORS: tuple[str, ...] = (
 )
 
 
-def _verified_rows(symbol: str, as_of_date: str) -> pd.DataFrame:
+def _now_utc() -> datetime:
+    """The clock, isolated so tests can pin a session time."""
+    return datetime.now(UTC)
+
+
+def _is_settled(as_of_date: str, now: datetime | None = None, *, is_crypto: bool = False) -> bool:
+    """Whether the ``as_of_date`` daily bar is a final close, not a partial candle.
+
+    A date before today is settled. A cash-market bar dated today is settled
+    only after the last major session has closed and the vendor has had a
+    moment to publish the final row. Crypto's UTC daily bar is settled only
+    once the UTC date has rolled over.
+    """
+    target = pd.to_datetime(as_of_date).date()
+    current = now or _now_utc()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    current = current.astimezone(UTC)
+    if target < current.date():
+        return True
+    if target > current.date():
+        return False
+    if is_crypto:
+        return False
+    return current.time() >= _SETTLED_AFTER_UTC
+
+
+def _verified_rows(symbol: str, as_of_date: str, *, now: datetime | None = None) -> pd.DataFrame:
     """OHLCV on or before as_of_date, date-sorted. Raises NoMarketDataError if nothing usable.
 
     ``load_ohlcv`` already normalizes the Date column and filters out
     look-ahead rows, but we re-apply the cutoff defensively — this is a
     verification path, so it must not trust its input to be pre-filtered.
+
+    A current-day bar is excluded while its session is still open: the vendor
+    returns a partial candle whose Close is not the closing price, and row
+    inspection cannot tell the two apart. Using the last completed session is
+    the only way the snapshot can honestly call itself verified.
     """
     # As reported: this snapshot is quoted by the agents as exact prices, so a
     # gap-filled cell would put the previous session's number under this date.
@@ -47,6 +88,15 @@ def _verified_rows(symbol: str, as_of_date: str) -> pd.DataFrame:
     df = df[df["Date"] <= pd.to_datetime(as_of_date)].sort_values("Date")
     if df.empty:
         raise NoMarketDataError(symbol, normalize_symbol(symbol), f"no price rows on or before {as_of_date}")
+
+    is_crypto = crypto_base(symbol) is not None
+    if not _is_settled(as_of_date, now, is_crypto=is_crypto):
+        cutoff = pd.to_datetime(as_of_date).normalize()
+        df = df[df["Date"] < cutoff]
+    if df.empty:
+        raise NoMarketDataError(
+            symbol, normalize_symbol(symbol), f"no settled price rows on or before {as_of_date}"
+        )
     return df
 
 
@@ -145,6 +195,7 @@ def build_verified_market_snapshot(
     # `df` keeps the original capitalized OHLCV columns (Open/High/Low/Close/
     # Volume); stockstats `wrap()` lowercases columns and adds indicator
     # columns, so read raw prices from `df` and indicators from `stock_df`.
+    is_crypto = crypto_base(symbol) is not None
     df = _verified_rows(symbol, as_of_date)
     stock_df = wrap(df.copy())
 
@@ -179,6 +230,11 @@ def build_verified_market_snapshot(
             "the latest completed session. That can mean the requested date is a "
             "weekend or market holiday, or that its session has not closed yet."
         )
+        if not _is_settled(as_of_date, is_crypto=is_crypto):
+            lines.append(
+                f"- Note: the {as_of_date} bar is not a settled close and was excluded; "
+                "the row above is the latest close."
+            )
     lines += [
         "",
         "### Latest verified OHLCV row",
@@ -188,6 +244,27 @@ def build_verified_market_snapshot(
     ]
     for field in ("Open", "High", "Low", "Close", "Volume"):
         lines.append(f"| {field} | {_fmt(latest.get(field))} |")
+
+    # Candle anatomy is easy to get wrong from prose: "Close - Low" is the
+    # recovery from the low, not the lower shadow. Give the model the exact
+    # definitions so a bullish candle is not mislabelled a hammer.
+    open_, high, low, close = (_num(latest.get(field)) for field in ("Open", "High", "Low", "Close"))
+    if None not in (open_, high, low, close) and high >= low:
+        body = abs(close - open_)
+        upper = high - max(open_, close)
+        lower = min(open_, close) - low
+        lines += ["", "### Candle anatomy (derived)", "", "| Field | Value |", "|---|---:|",
+                  f"| Body (|Close - Open|) | {_fmt(body)} |",
+                  f"| Upper shadow (High - max(Open, Close)) | {_fmt(upper)} |",
+                  f"| Lower shadow (min(Open, Close) - Low) | {_fmt(lower)} |"]
+        if high > low:
+            close_position = (close - low) / (high - low) * 100.0
+            lines.append(f"| Close position in range | {close_position:.1f}% |")
+        lines.append(
+            "Lower shadow is min(Open, Close) - Low, not Close - Low. "
+            "Call a candle a hammer only when the lower shadow is at least twice "
+            "the body and the upper shadow is small."
+        )
 
     lines += ["", "### Verified technical indicators (latest row)", "",
               "| Indicator | Value |", "|---|---:|"]

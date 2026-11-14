@@ -146,6 +146,22 @@ def get_fundamentals(
         ]
 
     lines = [f"{label}: {v}" for label, v in fields if v is not None]
+    # PE and P/B must imply the same ROE if they are computed from the same
+    # price and book value. A vendor field that disagrees is a data-quality
+    # problem, not a bullish fact; flag it instead of letting it become the
+    # report's "capital efficiency" headline.
+    roe = info.get("returnOnEquity")
+    pe = info.get("trailingPE")
+    pb = info.get("priceToBook")
+    if not is_etf and roe and pe and pb and pe != 0:
+        implied_roe = pb / pe
+        if abs(implied_roe - roe) > 0.15 * abs(roe):
+            lines.append(
+                f"Valuation consistency note: vendor Return on Equity is {roe:.2%}, "
+                f"but P/B ÷ P/E implies {implied_roe:.2%} from the same fields. "
+                "Treat the ROE field as unverified; prefer the statement-derived "
+                "figure or omit it."
+            )
     if not is_etf and info.get("freeCashflow") is not None:
         lines.append(
             "Free-cash-flow note: the vendor-computed figure above uses the "

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pandas as pd
 import pytest
 
@@ -19,6 +21,17 @@ def _sample_ohlcv() -> pd.DataFrame:
         "Low": [c - 1.0 for c in closes],
         "Close": closes,
         "Volume": [1_000_000 + i for i in range(len(dates))],
+    })
+
+
+def _three_days() -> pd.DataFrame:
+    return pd.DataFrame({
+        "Date": pd.to_datetime(["2026-05-11", "2026-05-12", "2026-05-13"]),
+        "Open": [99.0, 100.0, 173.04],
+        "High": [101.0, 102.0, 179.79],
+        "Low": [98.0, 99.0, 170.24],
+        "Close": [100.0, 101.0, 179.66],
+        "Volume": [1_000_000, 1_000_000, 181_646_706],
     })
 
 
@@ -52,6 +65,54 @@ class TestVerifiedSnapshot:
         monkeypatch.setattr(validator, "load_ohlcv", lambda s, d, fill_gaps=True: _sample_ohlcv())
         snap = validator.build_verified_market_snapshot("COF", "2026-05-13")
         assert "no settled bar is available" not in snap
+
+    def test_an_unsettled_current_day_bar_is_excluded(self, monkeypatch):
+        """Yahoo emits a partial candle during the session. A snapshot dated
+        today must use the last completed session, not the partial close."""
+        monkeypatch.setattr(validator, "load_ohlcv", lambda s, d, fill_gaps=True: _three_days())
+        monkeypatch.setattr(
+            validator, "_now_utc",
+            lambda: datetime(2026, 5, 13, 15, 0, tzinfo=UTC),
+        )
+        snap = validator.build_verified_market_snapshot("COF", "2026-05-13")
+        assert "Latest trading row used: 2026-05-12" in snap
+        assert "not a settled close" in snap
+        assert "| Close | 179.66 |" not in snap
+        assert "| Close | 101.00 |" in snap
+
+    def test_a_current_day_bar_is_kept_after_the_session_settles(self, monkeypatch):
+        monkeypatch.setattr(validator, "load_ohlcv", lambda s, d, fill_gaps=True: _three_days())
+        monkeypatch.setattr(
+            validator, "_now_utc",
+            lambda: datetime(2026, 5, 13, 23, 0, tzinfo=UTC),
+        )
+        snap = validator.build_verified_market_snapshot("COF", "2026-05-13")
+        assert "Latest trading row used: 2026-05-13" in snap
+        assert "not a settled close" not in snap
+        assert "| Close | 179.66 |" in snap
+
+    def test_crypto_current_day_bar_waits_for_the_utc_rollover(self, monkeypatch):
+        monkeypatch.setattr(validator, "load_ohlcv", lambda s, d, fill_gaps=True: _three_days())
+        monkeypatch.setattr(
+            validator, "_now_utc",
+            lambda: datetime(2026, 5, 13, 23, 0, tzinfo=UTC),
+        )
+        snap = validator.build_verified_market_snapshot("BTC-USD", "2026-05-13")
+        assert "Latest trading row used: 2026-05-12" in snap
+        assert "not a settled close" in snap
+
+    def test_candle_anatomy_uses_the_shadow_not_close_minus_low(self, monkeypatch):
+        monkeypatch.setattr(validator, "load_ohlcv", lambda s, d, fill_gaps=True: _three_days())
+        monkeypatch.setattr(
+            validator, "_now_utc",
+            lambda: datetime(2026, 5, 13, 23, 0, tzinfo=UTC),
+        )
+        snap = validator.build_verified_market_snapshot("COF", "2026-05-13")
+        assert "| Body (|Close - Open|) | 6.62 |" in snap
+        assert "| Lower shadow (min(Open, Close) - Low) | 2.80 |" in snap
+        assert "| Upper shadow (High - max(Open, Close)) | 0.13 |" in snap
+        assert "| Close position in range | 98.6% |" in snap
+        assert "not Close - Low" in snap
 
     def test_raises_when_no_rows_on_or_before_date(self, monkeypatch):
         monkeypatch.setattr(validator, "load_ohlcv", lambda s, d, fill_gaps=True: _sample_ohlcv())

@@ -59,6 +59,18 @@ def _inline_plain(text: str) -> str:
     return " ".join(text.split()).strip()
 
 
+def _clip(text: str, limit: int = 70) -> str:
+    """Shorten prose to ``limit`` characters at a clause boundary."""
+    clean = " ".join(str(text or "").split())
+    if len(clean) <= limit:
+        return clean
+    head = clean[:limit]
+    cut = max(head.rfind(mark) for mark in "。；;，,、：: ")
+    if cut >= limit * 0.5:
+        head = head[:cut]
+    return head.rstrip("。；;，,、：:—-– ") + "\u2026"
+
+
 def tables(text: str) -> list[Table]:
     """Every GFM table in ``text``, parsed without rendering the prose."""
     if not text or "|" not in text:
@@ -517,7 +529,7 @@ def extract_catalysts(text: str) -> list[dict]:
             what = clean[: date.start()] + clean[date.end():]
         what = what.strip(" ~:—-/")
         if what:
-            items.append({"when": when, "what": what[:110]})
+            items.append({"when": when, "what": _clip(what, 110)})
     return items[:6]
 
 
@@ -526,7 +538,7 @@ def _first_sentence(text: str, limit: int = 220) -> str:
     if not clean:
         return ""
     sentence = re.split(r"(?<=[.!?。！？])\s+", clean)[0]
-    return sentence[:limit].rstrip() + ("…" if len(sentence) > limit else "")
+    return _clip(sentence, limit)
 
 
 def extract_arguments(text: str, limit: int = 6) -> list[dict]:
@@ -545,7 +557,7 @@ def extract_arguments(text: str, limit: int = 6) -> list[dict]:
         key = heading.lower()[:40]
         if key and key not in seen:
             seen.add(key)
-            found.append({"title": heading[:90], "summary": summary})
+            found.append({"title": _clip(heading, 90), "summary": summary})
         if len(found) >= limit:
             break
     if found:
@@ -594,20 +606,26 @@ def scorecard(rows) -> str:
     chinese = any(re.search(r"[\u4e00-\u9fff]", str(cell)) for row in rows for cell in row)
     headings = (("指标", "数值", "信号", "说明") if chinese
                 else ("Metric", "Value", "Signal", "Why it matters"))
+    # A table that carries no direction/why column should not reserve two blank
+    # columns: keep only the columns that actually hold text.
+    keep = [index for index in range(4)
+            if any(str(row[index]).strip() for row in rows)]
     body = []
     for row in rows:
         label, value, signal, note = row
         tone = signal if signal in {"up", "down", "watch", "neutral"} else _signal(signal)
-        body.append(
-            '<div class="score-row">'
-            f'<span class="score-label">{escape(str(label))}</span>'
-            f'<span class="score-value">{escape(str(value))}</span>'
-            f'<span class="score-signal {tone}">{escape(str(signal))}</span>'
-            f'<span class="score-note">{escape(str(note))}</span>'
-            "</div>"
+        cells = (
+            f'<span class="score-label">{escape(str(label))}</span>',
+            f'<span class="score-value">{escape(str(value))}</span>',
+            f'<span class="score-signal {tone}">{escape(str(signal))}</span>',
+            f'<span class="score-note">{escape(str(note))}</span>',
         )
-    head = "".join(f"<span>{escape(text)}</span>" for text in headings)
-    return ('<div class="scorecard"><div class="score-head">'
+        body.append('<div class="score-row">' + "".join(cells[index] for index in keep)
+                    + "</div>")
+    names = ("label", "value", "signal", "note")
+    head = "".join(f'<span class="score-h-{names[index]}">{escape(headings[index])}</span>'
+                   for index in keep)
+    return (f'<div class="scorecard" data-cols="{len(keep)}"><div class="score-head">'
             + head + "</div>" + "".join(body) + "</div>")
 
 
@@ -659,7 +677,7 @@ def _bullets(text: str, limit: int = 4) -> list[str]:
     for match in re.finditer(r"^\s*[-*]\s+\*\*(.+?)\*\*", text or "", re.MULTILINE):
         lead = _inline_plain(match.group(1))
         if lead and lead not in leads:
-            leads.append(lead[:120])
+            leads.append(_clip(lead, 120))
         if len(leads) >= limit:
             break
     return leads
@@ -733,7 +751,7 @@ def market_summary(text: str, chart_data: dict) -> str:
                 continue
             rows.append((label, _inline_plain(table.cell(row, value)),
                          _inline_plain(table.cell(row, signal)),
-                         _inline_plain(table.cell(row, why))[:70]))
+                         _clip(_inline_plain(table.cell(row, why)), 90)))
         if rows:
             blocks.append(scorecard(rows))
 
@@ -741,7 +759,8 @@ def market_summary(text: str, chart_data: dict) -> str:
     regime_table = _table_matching(text, ("维度", "dimension"), ("读数", "reading", "事实"))
     if regime_table is not None:
         label_col = _column(regime_table, "维度", "dimension")
-        read_col = _column(regime_table, "读数", "reading", "事实")
+        read_col = _column(regime_table, "读数", "reading", "事实", "结论")
+        value_col = _column(regime_table, "数值", "value", "当前值")
         direction_col = _column(regime_table, "方向", "direction")
         weight_col = _column(regime_table, "权重", "weight")
         note_col = _column(regime_table, "说明", "note", "why")
@@ -751,9 +770,21 @@ def market_summary(text: str, chart_data: dict) -> str:
             label = _inline_plain(regime_table.cell(row, label_col))
             if not label:
                 continue
+            reading = _inline_plain(regime_table.cell(row, read_col))
+            value = _inline_plain(regime_table.cell(row, value_col)) if value_col is not None else ""
+            if value_col is None:
+                # No numeric column: the reading is the value, the last column the why.
+                value = reading
+                note = _inline_plain(regime_table.cell(row, note_col))
+            elif not value or value in {"—", "-", "–", "N/A", "n/a"}:
+                # The row has no number: the prose belongs in the wide note column.
+                value = ""
+                note = reading
+            else:
+                note = reading
             direction = _inline_plain(regime_table.cell(row, direction_col))
-            rows.append((label, _inline_plain(regime_table.cell(row, read_col)),
-                         direction, _inline_plain(regime_table.cell(row, note_col))[:70]))
+            rows.append((label, _clip(value, 90),
+                         direction, _clip(note, 110)))
             if any(word in label for word in ("长期", "中期", "短期", "long-term",
                                               "medium-term", "short-term")):
                 trend_pills.append((f"{label} · {direction}", _signal(direction)))
@@ -866,8 +897,8 @@ def fundamentals_summary(text: str) -> str:
             if not value:
                 continue
             tone = _signal(_inline_plain(keypoints.cell(row, signal)))
-            cards.append({"label": name[:24], "value": value[:60],
-                          "note": _inline_plain(keypoints.cell(row, signal))[:40],
+            cards.append({"label": name[:24], "value": _clip(value, 90),
+                          "note": _clip(_inline_plain(keypoints.cell(row, signal)), 40),
                           "tone": tone})
         if cards:
             blocks.append(kpis(cards[:8]))
@@ -1057,7 +1088,7 @@ def sentiment_summary(text: str) -> str:
                 continue
             tone = _signal(table.cell(row, direction))
             rows.append((label, _inline_plain(table.cell(row, direction)),
-                         tone, _inline_plain(table.cell(row, evidence))[:80]))
+                         tone, _clip(_inline_plain(table.cell(row, evidence)), 90)))
         if rows:
             blocks.append(scorecard(rows))
     return "".join(blocks)
@@ -1140,7 +1171,7 @@ def trader_summary(final_state: dict) -> str:
     if plan.get("stop_loss"):
         body += f"<p><b>Stop</b> {escape(plan['stop_loss'][:100])}</p>"
     if plan.get("position_sizing"):
-        body += f"<p class=\"muted\">{escape(plan['position_sizing'][:180])}</p>"
+        body += f"<p class=\"muted\">{escape(_clip(plan['position_sizing'], 220))}</p>"
     return _trade_figure(final_state) + card(
         f"Trader · {plan['action']}", body, tone=_signal(plan["action"]))
 
@@ -1285,20 +1316,98 @@ def dashboard(chart_data: dict, final_state: dict) -> str:
     return "".join(blocks)
 
 
+_DATE_RE = re.compile(r"\b\d{4}-\d{1,2}-\d{1,2}\b")
+
+
+def _without_dates(text: str) -> str:
+    """Drop ISO dates so the year in ``2026-11-09`` is never read as a price."""
+    return _DATE_RE.sub(" ", text or "")
+
+
 def _report_number(text: str, label: str, window: int = 18) -> float | None:
-    # Prefer the table row (``10 EMA | 184.82``) over a narrative "from X to Y".
-    table = re.search(rf"{label}\s*\|\s*([-+\u2212]?[\d,]+(?:\.\d+)?)",
-                      text or "", re.IGNORECASE)
-    if table:
-        return number(table.group(1))
-    match = re.search(rf"{label}[^0-9]{{0,{window}}}([-+\u2212]?[\d,]+(?:\.\d+)?)",
-                      text or "", re.IGNORECASE)
-    return number(match.group(1)) if match else None
+    # Prefer a table cell or an explicit assignment (``10 EMA | 184.82``,
+    # ``ATR：8.385``) over a narrative "from X to Y".
+    text = _without_dates(text)
+    for pattern in (
+        rf"{label}\s*\|\s*\**\s*([-+\u2212]?[\d,]+(?:\.\d+)?)",
+        rf"{label}\s*[:：=]\s*\**\s*([-+\u2212]?[\d,]+(?:\.\d+)?)",
+    ):
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            value = number(match.group(1))
+            if value is not None:
+                return value
+    # A narrative mention; skip a percentage or a multiple (``ATR 跃升 35%``).
+    for match in re.finditer(
+        rf"{label}[^0-9]{{0,{window}}}([-+\u2212]?[\d,]+(?:\.\d+)?)(\s*[%％倍])?",
+        text, re.IGNORECASE,
+    ):
+        if match.group(2):
+            continue
+        value = number(match.group(1))
+        if value is not None:
+            return value
+    return None
+
+
+def _report_close(text: str, reference: float | None = None) -> float | None:
+    """The report's own last close, never a date or an unrelated table number.
+
+    Dates are stripped first (``| 收盘价 | 2026-11-09 |`` used to yield 2026),
+    then the first candidate near the vendor's close wins, so a stray number in
+    a long table cannot replace the price the chart is built on.
+    """
+    text = _without_dates(text)
+    candidates: list[float] = []
+    # A row that pairs a close label with its value cells; the last number in
+    # the row is the verified snapshot when both are present.
+    row = re.search(r"\|\s*[^|]*收盘[^|]*\|([^|]*\|[^|]*)\|", text)
+    if row:
+        tokens = re.findall(r"[-+\u2212]?\d[\d,]*(?:\.\d+)?", row.group(1))
+        values = [number(token) for token in tokens]
+        values = [value for value in values if value is not None]
+        if values:
+            candidates.append(values[-1])
+    for pattern in (
+        r"last verified close[^0-9]{0,25}([-+\u2212]?[\d,]+(?:\.\d+)?)",
+        r"last close[^0-9]{0,25}([-+\u2212]?[\d,]+(?:\.\d+)?)",
+        r"(?:收盘价|收盘|Close)[^0-9]{0,15}([-+\u2212]?[\d,]+(?:\.\d+)?)",
+    ):
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            value = number(match.group(1))
+            if value is not None:
+                candidates.append(value)
+    candidates = [value for value in candidates if 0 < value < 1_000_000]
+    if not candidates:
+        return None
+    if reference:
+        plausible = [value for value in candidates
+                     if abs(value - reference) <= reference * 0.25]
+        if plausible:
+            # The snapshot the report leads with wins over a later figure that
+            # happens to sit nearer the (possibly provisional) vendor close.
+            return plausible[0]
+    return candidates[0]
 
 
 def _report_volume(text: str) -> float | None:
     text = text or ""
-    # Chinese reports often write "234.9 万股" rather than a raw share count.
+    # A dated close/volume row is the most exact source when it exists; the
+    # last cell is the verified snapshot when the row repeats the number.
+    row = re.search(r"\|\s*[^|]*成交量[^|]*\|([^|]*\|[^|]*)\|", text)
+    if row:
+        tokens = re.findall(r"[\d,]+", row.group(1))
+        if tokens:
+            value = number(tokens[-1])
+            if value is not None:
+                return value
+    # Chinese reports often write "234.9 万股" or "2.03 亿股" rather than a raw
+    # share count.
+    match = re.search(r"(?:成交量|成交|量)\s*(?:仅|只有)?[^0-9]{0,12}([\d,.]+)\s*亿\s*股", text)
+    if match:
+        value = number(match.group(1))
+        if value is not None:
+            return value * 1e8
     match = re.search(r"成交量(?:仅|只有)?[^0-9]{0,12}([\d,.]+)\s*万\s*股", text)
     if match:
         value = number(match.group(1))
@@ -1354,38 +1463,50 @@ def _macd_values(text: str) -> tuple[float | None, float | None, float | None]:
     return number(match.group(1)), number(match.group(2)), number(match.group(3))
 
 
-def reconcile_chart_data(data: dict, market_text: str) -> dict:
+def reconcile_chart_data(data: dict, market_text: str, as_of: str | None = None) -> dict:
     """Make the chart's last bar agree with the report's verified snapshot.
 
     A vendor can restate a historical bar (or serve a partial one), so the
     report's own "last verified close" is the source of truth. Earlier bars stay
     the vendor series; only the final point and the summary numbers are moved.
+    When the vendor has no finished bar for ``as_of`` (a missing close or an
+    intraday download), the verified bar is appended instead of overwriting an
+    older day.
     """
     price = data.get("price") or {}
     close = price.get("close") or []
-    if len(close) < 2:
+    dates = price.get("dates") or []
+    if len(close) < 2 or not dates:
         return data
-    last = _report_number(market_text, "last verified close") or \
-        _report_number(market_text, "last close")
-    if last is None:
-        match = re.search(r"\|\s*(?:Close|收盘(?:价)?)\s*\|\s*([\d,]+(?:\.\d+)?)",
-                          market_text or "", re.IGNORECASE)
-        last = number(match.group(1)) if match else None
-    if last is None:
-        # "| 开盘 / 最高 / 最低 / 收盘 | 167.35 / 171.70 / 163.72 / 164.31 |"
-        match = re.search(
-            r"\|\s*[^|]*(?:开盘[^|]*收盘|Close\s*\()[^|]*\|\s*([^|]+)\|",
-            market_text or "", re.IGNORECASE)
-        if match:
-            values = re.findall(r"[\d,]+(?:\.\d+)?", match.group(1))
-            last = number(values[-1]) if values else None
+    last = _report_close(market_text, close[-1])
+    if last is not None:
+        last = round(last, 2)
     if last is None or not 0 < last < 1_000_000:
         return data
-    last = round(last, 2)
-    if abs(float(close[-1]) - last) < 0.01:
+    as_of = str(as_of or "")[:10]
+    missing_bar = bool(as_of and dates[-1] and dates[-1] < as_of)
+    if not missing_bar and abs(float(close[-1]) - last) < 0.01:
         return data
 
-    close[-1] = last
+    if missing_bar:
+        # Grow every shared series by one point, then fill it from the snapshot.
+        for key in ("high", "low", "volume"):
+            series = price.get(key)
+            if series and len(series) >= len(close):
+                series.append(None)
+        close.append(last)
+        dates.append(as_of)
+        for block in (data.get("rsi") or {}, data.get("macd") or {}):
+            names = ["values"] if "values" in block else ["macd", "signal", "histogram"]
+            for name in names:
+                series = block.get(name)
+                if series:
+                    series.append(None)
+        for overlay in data.get("overlays", []):
+            overlay["values"].append(None)
+    else:
+        close[-1] = last
+
     volume = price.get("volume") or []
     report_volume = _report_volume(market_text)
     if report_volume and volume:
@@ -1427,6 +1548,8 @@ def reconcile_chart_data(data: dict, market_text: str) -> dict:
     range_data = data.get("range") or {}
     high = range_data.get("high")
     drawdown = (last - high) / high * 100 if high else 0.0
+    if range_data:
+        range_data["last"] = last
     sma50 = references.get("50 SMA")
     sma200 = references.get("200 SMA")
     gap = (sma50 - sma200) if sma50 is not None and sma200 is not None else None
@@ -1500,7 +1623,8 @@ def build_chart_data_for_report(ticker: str, final_state: dict) -> dict:
         scenarios = extract_scenarios(final_state.get("market_report") or "")
         from tradingagents.chart_data import build_chart_data
         data = build_chart_data(ticker, trade_date, levels=levels, scenarios=scenarios)
-        return reconcile_chart_data(data, final_state.get("market_report") or "")
+        return reconcile_chart_data(data, final_state.get("market_report") or "",
+                                    as_of=trade_date)
     except Exception:
         # A missing chart must never stop a report from being written.
         return {}

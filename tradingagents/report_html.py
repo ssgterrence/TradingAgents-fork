@@ -161,6 +161,12 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   overflow: hidden; font: 0.82rem/1.4 var(--sans); }
 .score-head, .score-row { display: grid; grid-template-columns: 1.1fr 0.7fr 0.8fr 1.6fr;
   gap: 0.5rem; align-items: baseline; padding: 0.4rem 0.7rem; }
+.scorecard:where([data-cols="3"]) .score-head,
+.scorecard:where([data-cols="3"]) .score-row { grid-template-columns: 0.9fr 1fr 2.2fr; }
+.scorecard:where([data-cols="2"]) .score-head,
+.scorecard:where([data-cols="2"]) .score-row { grid-template-columns: 0.8fr 2.4fr; }
+.scorecard:where([data-cols="1"]) .score-head,
+.scorecard:where([data-cols="1"]) .score-row { grid-template-columns: 1fr; }
 .score-head { background: var(--wash); color: var(--muted); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.7rem; }
 .score-row { border-top: 1px solid var(--rule); }
@@ -209,8 +215,12 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .full-text .prose > :first-child { margin-top: 0; }
 
 @media (max-width: 40rem) {
-  .score-head, .score-row { grid-template-columns: 1fr 0.8fr 0.8fr; }
-  .score-note { display: none; }
+  .scorecard .score-head, .scorecard .score-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); }
+  .score-signal { display: none; }
+  .score-note { grid-column: 1 / -1; display: block; }
+  .scorecard .score-head > .score-h-signal,
+  .scorecard .score-head > .score-h-note { display: none; }
 }
 
 /* Three levels of separation: the five groups, the agents within a group, and

@@ -32,6 +32,9 @@ __all__ = [
 # primitives
 # --------------------------------------------------------------------------- #
 
+_TRIM_CHARS = " （(【[·,/、;；:：-–— "
+
+
 def _num(value: float, digits: int = 2) -> str:
     """A price or indicator value, with a true minus sign and thin grouping."""
     text = f"{value:,.{digits}f}"
@@ -88,6 +91,16 @@ def _domain(values, pad: float = 0.06) -> tuple[float, float]:
 def _ticks(lo: float, hi: float, count: int = 4) -> list[float]:
     step = (hi - lo) / count
     return [lo + step * i for i in range(count + 1)]
+
+
+def _axis_gutter(labels, base: float = 42) -> float:
+    """A left margin wide enough for the widest tick label at 8.5px.
+
+    ``150,483.2`` is nine characters; the old fixed 42px margin clipped its
+    leading digit against the viewBox edge.
+    """
+    widest = max((len(str(label)) for label in labels), default=0)
+    return max(base, widest * 5.2 + 10)
 
 
 def _label_rows(items, top: float, bottom: float, gap: float = 13.0):
@@ -173,7 +186,8 @@ def price_chart(dates: list[str], close: list[float], *, high=None, low=None,
                "stop": "c-level-resistance"}.get(kind, "c-level")
         parts.append(_line(left, y(price), plot_right, y(price), cls=cls))
         label_items.append((y(price), f"{_num(price)}  {name}"))
-    label_items.append((y(close[-1]), f"{_num(close[-1])}  last"))
+    if not any(abs(price - close[-1]) < 0.005 for price, _name, _kind in levels):
+        label_items.append((y(close[-1]), f"{_num(close[-1])}  last"))
 
     # Volume, coloured by the day's direction.
     if volume:
@@ -332,11 +346,14 @@ def _arc(cx, cy, r, start, end):
     return f"M {x0:.1f} {y0:.1f} A {r} {r} 0 {large} 1 {x1:.1f} {y1:.1f}"
 
 
-def gauge(value: float, *, label: str = "", width: int = 260, height: int = 150,
+def gauge(value: float, *, label: str = "", width: int = 280, height: int = 196,
           title: str = "Gauge") -> str:
     """A semicircular 0-100 gauge, for RSI or another bounded score."""
     value = max(0.0, min(100.0, float(value)))
-    cx, cy, r = width / 2, height - 24, min(width / 2 - 18, height - 40)
+    # The hub sits low; the reading goes *below* it so the needle never crosses
+    # the number, and the tick labels keep clear of the arc and both edges.
+    cx, cy = width / 2, height - 48
+    r = min(width / 2 - 26, height - 80)
     parts = [f'<path d="{_arc(cx, cy, r, 0, 100)}" class="c-gauge-track" fill="none" '
              f'stroke-width="13" stroke-linecap="round"/>']
     for start, end, cls in ((0, 30, "c-gauge-up"), (70, 100, "c-gauge-down")):
@@ -348,15 +365,24 @@ def gauge(value: float, *, label: str = "", width: int = 260, height: int = 150,
     nx, ny = _polar(cx, cy, r - 20, value)
     parts.append(_line(cx, cy, nx, ny, cls="c-needle"))
     parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3.2" class="c-dot"/>')
-    parts.append(_text(cx, cy - 20, _num(value, 1), anchor="middle", size=25, weight=600))
-    parts.append(_text(cx, cy + 16, label, anchor="middle", size=9.5, tone="--muted"))
+    parts.append(_text(cx, cy + 28, _num(value, 1), anchor="middle", size=22, weight=600))
+    parts.append(_text(cx, cy + 42, label, anchor="middle", size=9.5, tone="--muted"))
     return _svg(width, height, "".join(parts), title,
                 f"{title}: {value:.1f} of 100, {label}.")
 
 
 def level_ladder(levels, last: float, *, width: int = 460, title: str = "Key levels") -> str:
     """A vertical price ladder: every level on one axis, nearest first by price."""
-    rows = sorted(list(levels) + [(last, "Last close", "last")], key=lambda r: -r[0])
+    items, has_last = [], False
+    for price, name, kind in levels:
+        if abs(float(price) - float(last)) < 0.005:
+            items.append((price, name, "last"))
+            has_last = True
+        else:
+            items.append((price, name, kind))
+    if not has_last:
+        items.append((last, "Last close", "last"))
+    rows = sorted(items, key=lambda row: -row[0])
     row_h, header, footer = 25, 18, 8
     height = header + row_h * len(rows) + footer
     axis_left, axis_right = 132, 300
@@ -384,10 +410,12 @@ def level_ladder(levels, last: float, *, width: int = 460, title: str = "Key lev
                    "stop": "c-dot-resistance", "target": "c-dot-support"}.get(kind, "c-dot")
         parts.append(f'<circle cx="{x(price):.1f}" cy="{cy:.1f}" r="{3.6 if current else 2.8}" '
                      f'class="{dot_cls}"/>')
+        parts.append(_text(axis_right + 12, cy + 3.5, name, size=10 if current else 9.5,
+                           weight=600 if current else 400))
         if current:
-            parts.append(_text(axis_right + 12, cy + 3.5, "—", size=10, weight=600))
+            parts.append(_text(width - 2, cy + 3.5, "\u2014", anchor="end", size=9.5,
+                               weight=600))
             continue
-        parts.append(_text(axis_right + 12, cy + 3.5, name, size=9.5))
         tone = {"support": "--up", "target": "--up",
                 "resistance": "--down", "stop": "--down"}.get(kind, "--muted")
         parts.append(_text(width - 2, cy + 3.5, _distance(price, last), anchor="end", size=9.5,
@@ -429,6 +457,19 @@ def diverging_bars(items, *, width: int = 460, title: str = "Distance from bench
                 "Each benchmark's distance from the last close.")
 
 
+def _fit_label(text, max_px: float, size: float = 10) -> str:
+    """Trim a label to the pixels available, counting CJK glyphs as a full em."""
+    text = str(text)
+    width = 0.0
+    for index, char in enumerate(text):
+        step = size if ord(char) > 0x2E80 else size * 0.55
+        if width + step > max_px:
+            head = text[:index].rstrip(_TRIM_CHARS)
+            return (head or text[:index]) + "\u2026"
+        width += step
+    return text
+
+
 def prob_bars(items, *, width: int = 460, title: str = "Scenarios") -> str:
     """Horizontal probability bars: ``(label, percent, tone)``."""
     row_h, header, footer = 28, 18, 6
@@ -440,7 +481,7 @@ def prob_bars(items, *, width: int = 460, title: str = "Scenarios") -> str:
              _text(width - 2, 11, "Probability", anchor="end", size=9, tone="--muted")]
     for i, (label, pct, tone) in enumerate(items):
         cy = header + row_h * i + row_h / 2
-        parts.append(_text(0, cy + 3.5, label, size=10))
+        parts.append(_text(0, cy + 3.5, _fit_label(label, label_w - 8), size=10))
         parts.append(f'<rect x="{bar_left}" y="{cy - 6:.1f}" width="{bar_right - bar_left}" '
                      f'height="12" rx="2" class="c-track"/>')
         w = max(1.5, (max(0, pct) / total) * (bar_right - bar_left))
@@ -468,8 +509,19 @@ def _clean(values):
 
 
 def _short(label: str, limit: int = 12) -> str:
-    text = str(label)
-    return text if len(text) <= limit else text[: limit - 1] + "\u2026"
+    """Shorten a label without chopping a date or word mid-token."""
+    text = str(label).strip()
+    if len(text) <= limit:
+        return text
+    # A parenthetical tail is optional detail: drop it whole when it fits.
+    for opener in ("（", "(", "【", "["):
+        head = text.split(opener, 1)[0].strip()
+        if 0 < len(head) <= limit:
+            return head
+    cut = text[:limit].rstrip(_TRIM_CHARS)
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return (cut or text[: limit - 1]).rstrip(_TRIM_CHARS) + "\u2026"
 
 
 def bar_chart(labels, values, *, width: int = 460, height: int = 190,
@@ -510,11 +562,15 @@ def bar_chart(labels, values, *, width: int = 460, height: int = 190,
         lo -= pad
         hi += pad
 
+    ticks = _ticks(lo, hi, 4)
+    left = _axis_gutter([_num(tick, 1) for tick in ticks], left)
+    plot_w = width - left - right
+
     def y(value):
         return top + (hi - value) / (hi - lo) * plot_h
 
     parts = []
-    for tick in _ticks(lo, hi, 4):
+    for tick in ticks:
         parts.append(_line(left, y(tick), width - right, y(tick), cls="c-grid"))
         parts.append(_text(left - 7, y(tick) + 3.5, _num(tick, 1), anchor="end", size=8.5))
     if lo <= 0 <= hi:
@@ -567,6 +623,8 @@ def line_chart(labels, series, *, width: int = 460, height: int = 190,
     hi += pad
 
     left, right, top, bottom = 42, 54, 26, 30
+    ticks = _ticks(lo, hi, 4)
+    left = _axis_gutter([_num(tick, 1) for tick in ticks], left)
     plot_w = width - left - right
     plot_h = height - top - bottom
     n = len(labels)
@@ -578,7 +636,7 @@ def line_chart(labels, series, *, width: int = 460, height: int = 190,
         return top + (hi - value) / (hi - lo) * plot_h
 
     parts = []
-    for tick in _ticks(lo, hi, 4):
+    for tick in ticks:
         parts.append(_line(left, y(tick), width - right, y(tick), cls="c-grid"))
         parts.append(_text(left - 7, y(tick) + 3.5, _num(tick, 1), anchor="end", size=8.5))
     for i in sorted({0, n // 4, n // 2, 3 * n // 4, n - 1}):
@@ -676,7 +734,8 @@ def trade_plan(entry: float, stop: float, targets=(), *, last: float | None = No
                      f'class="c-zone-up"/>')
     markers = [(stop, "Stop", "--down"), (entry, "Entry", "--ink")]
     markers += [(value, f"Target {i}", "--up") for i, value in enumerate(targets, 1)]
-    if last is not None:
+    if last is not None and all(abs(float(last) - value) > 0.005
+                                for value, _label, _tone in markers):
         markers.append((float(last), "Last", "--muted"))
     for index, (value, label, tone) in enumerate(markers):
         mx = x(value)

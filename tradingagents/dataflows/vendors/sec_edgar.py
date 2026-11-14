@@ -492,7 +492,13 @@ def _statement(kind: str, ticker: str, freq: str, as_of_date: str, title: str) -
                 f"# Segment revenue: not available this run ({type(exc).__name__}); "
                 "the consolidated figures above are unaffected.\n"
             )
-    return header + "\n".join(rows) + "\n" + derived + segments
+    eps_note = ""
+    if kind == "income_statement" and not quarterly:
+        eps_note = (
+            "# Note: Diluted EPS is as filed for each period. A stock split changes the\n"
+            "# share count; compare EPS across periods only after adjusting for splits.\n"
+        )
+    return header + "\n".join(rows) + "\n" + derived + eps_note + segments
 
 
 def _ttm_for(values: dict, annual_values: dict) -> tuple[str, float] | None:
@@ -536,8 +542,40 @@ def _ttm_for(values: dict, annual_values: dict) -> tuple[str, float] | None:
     return end, annual_values[annual_period] + values[(end, index)] - values[prior_key]
 
 
+def _derived_latest_quarter(values: dict) -> tuple[str, float] | None:
+    """The latest single quarter from periodic filings, or None.
+
+    A 10-Q cash flow is usually filed year to date. The latest quarter is the
+    latest YTD span minus the prior YTD span of the same fiscal year
+    (6M - 3M, 9M - 6M); a period already filed as a discrete quarter is used
+    as is. This is the number an analyst would otherwise have to subtract by
+    hand — and can get wrong by thousands of millions.
+    """
+    if not values:
+        return None
+    end, index = max(values)
+    if index == 0:
+        return end, values[(end, index)]
+    prior = [
+        (prior_end, value)
+        for (prior_end, prior_index), value in values.items()
+        if prior_index == index - 1
+        and prior_end < end
+        and 45 <= (date.fromisoformat(end) - date.fromisoformat(prior_end)).days <= 120
+    ]
+    if not prior:
+        return None
+    prior_end, prior_value = max(prior)
+    return end, values[(end, index)] - prior_value
+
+
 def _derived_ttm_cashflow(us_gaap: dict, as_of_date: str, quarterly: bool) -> str:
-    """A statement-derived TTM cash flow note, or an empty string."""
+    """Statement-derived cash-flow notes, or an empty string.
+
+    Two deterministic numbers are surfaced: the TTM (annual + YTD - prior YTD)
+    and the latest single quarter (YTD - prior YTD). Both are derived, not
+    filed lines, and are labelled as such so the model does not invent them.
+    """
     if not quarterly:
         return ""
     spans = (_SPANS["quarterly"], *((low, high) for low, high, _ in _YEAR_TO_DATE))
@@ -547,19 +585,32 @@ def _derived_ttm_cashflow(us_gaap: dict, as_of_date: str, quarterly: bool) -> st
         label: _as_of(us_gaap, tags, as_of_date, annual_spans, _ANNUAL_FORMS)[0]
         for label, tags in _STATEMENTS["cashflow"]
     }
+    notes: list[str] = []
+
     ocf = _ttm_for(labels["Operating Cash Flow"][0], annual["Operating Cash Flow"])
     capex = _ttm_for(labels["Capital Expenditure"][0], annual["Capital Expenditure"])
-    if ocf is None or capex is None or ocf[0] != capex[0]:
-        return ""
-    end = ocf[0]
-    return (
-        f"# Derived (not filed): TTM cash flow as of {end}\n"
-        f"# Operating Cash Flow TTM: {_millions(ocf[1])}\n"
-        f"# Capital Expenditure TTM: {_millions(capex[1])}\n"
-        f"# Free Cash Flow TTM (Operating Cash Flow - Capital Expenditure): {_millions(ocf[1] - capex[1])}\n"
-        f"# Free cash flow is a derived metric, not a figure any filing states; state\n"
-        f"# its definition and window when comparing it with a vendor's figure.\n"
-    )
+    if ocf is not None and capex is not None and ocf[0] == capex[0]:
+        notes.append(
+            f"# Derived (not filed): TTM cash flow as of {ocf[0]}\n"
+            f"# Operating Cash Flow TTM: {_millions(ocf[1])}\n"
+            f"# Capital Expenditure TTM: {_millions(capex[1])}\n"
+            f"# Free Cash Flow TTM (Operating Cash Flow - Capital Expenditure): {_millions(ocf[1] - capex[1])}\n"
+            "# Free cash flow is a derived metric, not a figure any filing states; state\n"
+            "# its definition and window when comparing it with a vendor's figure.\n"
+        )
+
+    ocf_quarter = _derived_latest_quarter(labels["Operating Cash Flow"][0])
+    capex_quarter = _derived_latest_quarter(labels["Capital Expenditure"][0])
+    if ocf_quarter is not None and capex_quarter is not None and ocf_quarter[0] == capex_quarter[0]:
+        notes.append(
+            f"# Derived (not filed): latest single quarter from year-to-date filings\n"
+            f"# Quarter ended: {ocf_quarter[0]}\n"
+            f"# Operating Cash Flow (single quarter): {_millions(ocf_quarter[1])}\n"
+            f"# Capital Expenditure (single quarter): {_millions(capex_quarter[1])}\n"
+            f"# Free Cash Flow (single quarter): {_millions(ocf_quarter[1] - capex_quarter[1])}\n"
+            "# Use the single-quarter figure above; do not subtract a different period.\n"
+        )
+    return "\n".join(notes)
 
 
 def _millions(value: float) -> str:

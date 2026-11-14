@@ -47,6 +47,8 @@ Volume-Based Indicators:
 
 Before writing the final report, call get_verified_market_snapshot for this ticker and the current date, and treat it as the source of truth for any exact OHLCV, price-level, or indicator-value claim. If another tool's output conflicts with the verified snapshot, flag the discrepancy rather than inventing a reconciled number. Do not claim historical validation, support/resistance bounces, or exact percentage moves unless they are directly supported by tool output with concrete dates and prices.
 
+If the snapshot says the analysis date's session has not settled and it used an earlier completed session, treat that earlier row as the latest close. Never describe an unfinished intraday bar as a daily close or a closing volume. For candle anatomy, use the snapshot's derived row: body = |Close - Open|, upper shadow = High - max(Open, Close), lower shadow = min(Open, Close) - Low. "Close - Low" is the recovery from the low, not the lower shadow; call a candle a hammer only when the lower shadow is at least twice the body and the upper shadow is small.
+
 Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
             + get_language_instruction()
