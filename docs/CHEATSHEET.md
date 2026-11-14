@@ -56,7 +56,8 @@ All four analysts: `market`, `sentiment`, `news`, `fundamentals`.
 
 ## 4. Portfolio file
 
-See `portfolio.example.json`. Schema:
+See `portfolio.example.json`. Keep your own book in `portfolio.json` (gitignored)
+and pass `--portfolio portfolio.json`; never commit real holdings. Schema:
 
 ```json
 {

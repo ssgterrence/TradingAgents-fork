@@ -225,3 +225,9 @@ health-reports/
 
 .venv-*
 logs
+
+# Local portfolio file (real holdings; never commit)
+portfolio.json
+
+# Local knowledge-graph output (generated, contains absolute paths)
+graphify-out/
